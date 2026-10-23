@@ -1,0 +1,44 @@
+name: Publish static HTML to NINJAL www2 (approval required)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  publish:
+    if: ${{ vars.ENABLE_NINJAL_DEPLOY == 'true' }}
+    runs-on: ubuntu-latest
+    environment: ninjal-web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and check JavaScript-free HTML
+        run: |
+          python3 scripts/build_site.py
+          python3 scripts/validate_site.py
+      - name: Copy only public HTML and CSS to approved web directory
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.NINJAL_SSH_HOST }}
+          SSH_PORT: ${{ secrets.NINJAL_SSH_PORT }}
+          SSH_USER: ${{ secrets.NINJAL_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.NINJAL_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.NINJAL_SSH_KNOWN_HOSTS }}
+          DEPLOY_PATH: ${{ secrets.NINJAL_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          : "${SSH_HOST:?missing NINJAL_SSH_HOST}"
+          : "${SSH_USER:?missing NINJAL_SSH_USER}"
+          : "${SSH_PRIVATE_KEY:?missing NINJAL_SSH_PRIVATE_KEY}"
+          : "${SSH_KNOWN_HOSTS:?missing NINJAL_SSH_KNOWN_HOSTS}"
+          : "${DEPLOY_PATH:?missing NINJAL_DEPLOY_PATH}"
+          case "$DEPLOY_PATH" in
+            /*/lingfes/) ;;
+            *) echo "Deployment path must be absolute and end with /lingfes/" >&2; exit 1;;
+          esac
+          SSH_PORT="${SSH_PORT:-22}"
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$RUNNER_TEMP/lingfes_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$RUNNER_TEMP/lingfes_hosts"
+          chmod 600 "$RUNNER_TEMP/lingfes_key" "$RUNNER_TEMP/lingfes_hosts"
+          rsync -avz --chmod=D755,F644 -e "ssh -i $RUNNER_TEMP/lingfes_key -p $SSH_PORT -o UserKnownHostsFile=$RUNNER_TEMP/lingfes_hosts -o StrictHostKeyChecking=yes" public/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH"

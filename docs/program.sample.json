@@ -1,0 +1,53 @@
+{
+  "year": 2027,
+  "status": "sample",
+  "updated": "2026-10-12",
+  "presentations": [
+    {
+      "id": "LF2027-A-001",
+      "slot": "A",
+      "booth": "B01",
+      "title": "【サンプル】方言音声の比較研究（研究計画）",
+      "authors": "発表者A",
+      "category": "未完成研究",
+      "keywords": [
+        "音声学",
+        "方言"
+      ],
+      "summary": "これは画面動作確認用の架空データです。",
+      "pdf_url": "",
+      "ovice_url": "",
+      "onsite": false
+    },
+    {
+      "id": "LF2027-B-001",
+      "slot": "B",
+      "booth": "B33",
+      "title": "【サンプル】言語資源を共同で作るプロジェクト",
+      "authors": "発表者B・発表者C",
+      "category": "研究室・企画",
+      "keywords": [
+        "コーパス"
+      ],
+      "summary": "このサンプルは実際の発表者・資料を示しません。",
+      "pdf_url": "",
+      "ovice_url": "",
+      "onsite": true
+    },
+    {
+      "id": "LF2027-C-001",
+      "slot": "C",
+      "booth": "B14",
+      "title": "【サンプル】読解における視線移動と理解",
+      "authors": "発表者D",
+      "category": "完成研究",
+      "keywords": [
+        "心理言語学"
+      ],
+      "summary": "仮の説明文です。",
+      "pdf_url": "",
+      "ovice_url": "",
+      "onsite": false
+    }
+  ]
+}

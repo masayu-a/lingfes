@@ -1,0 +1,12 @@
+{
+  "year": 2027,
+  "title": "言語学フェス2027",
+  "status": "準備中",
+  "staff_application_url": "",
+  "presentation_application_url": "",
+  "pdf_submission_url": "",
+  "participation_application_url": "",
+  "contact_url": "",
+  "site_base_url": "https://www2.ninjal.ac.jp/lingfes/",
+  "note": "申込リンクが確定したらGitHubのpublic/data/site-2027.jsonを編集。空欄は「準備中」として表示。"
+}
