@@ -57,3 +57,8 @@ section{margin-top:48px;scroll-margin-top:85px}h2{font-size:1.55rem;color:var(--
 @media(max-width:700px){.booth .booth-title{display:none}.map-layout .booth{min-height:49px}.program-table td{font-size:.85rem}}
 @media print{.slot-nav a{border:1px solid #888}.booth{break-inside:avoid}.map-layout{break-inside:avoid}}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+/* Organizing committee (2027). */
+.committee-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 28px;margin:12px 0 3px;padding-left:1.4em}
+.committee-list li{padding:3px 4px;break-inside:avoid}
+@media(max-width:700px){.committee-list{grid-template-columns:1fr}}
