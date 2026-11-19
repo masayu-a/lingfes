@@ -17,7 +17,8 @@
       "summary": "これは画面動作確認用の架空データです。",
       "pdf_url": "",
       "ovice_url": "",
-      "onsite": false
+      "onsite": false,
+      "day2_poster": true
     },
     {
       "id": "LF2027-B-001",
@@ -32,7 +33,8 @@
       "summary": "このサンプルは実際の発表者・資料を示しません。",
       "pdf_url": "",
       "ovice_url": "",
-      "onsite": true
+      "onsite": true,
+      "day2_poster": false
     },
     {
       "id": "LF2027-C-001",
@@ -47,7 +49,8 @@
       "summary": "仮の説明文です。",
       "pdf_url": "",
       "ovice_url": "",
-      "onsite": false
+      "onsite": false,
+      "day2_poster": true
     }
   ]
 }

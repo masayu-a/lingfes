@@ -58,6 +58,7 @@ def validate(site: dict, program: dict) -> list[dict]:
         raise ValueError("Online presentations must be <=108")
     used: set[tuple[str, str]] = set()
     onsite_count = 0
+    day2_poster_counts = Counter()
     slot_counts = Counter()
     for i, p in enumerate(pres, 1):
         if not isinstance(p, dict):
@@ -78,14 +79,20 @@ def validate(site: dict, program: dict) -> list[dict]:
             raise ValueError(f"Entry {i}: excessively long summary")
         for key in ("pdf_url", "ovice_url"):
             https_url(p.get(key, ""), f"Entry {i} {key}")
+        if not isinstance(p.get("onsite", False), bool) or not isinstance(p.get("day2_poster", False), bool):
+            raise ValueError(f"Entry {i}: onsite and day2_poster must be boolean")
         if p.get("onsite", False):
             onsite_count += 1
             if int(booth[1:]) not in ONSITE_BOOTH_NUMBERS:
-                raise ValueError(f"Entry {i}: onsite presentation must be in P27–P30 or P33–P36")
+                raise ValueError(f"Entry {i}: March 27 onsite streaming must be in P27–P30 or P33–P36")
+        if p.get("day2_poster", False):
+            day2_poster_counts[slot] += 1
     if any(slot_counts[x] > 36 for x in SLOTS):
         raise ValueError("Maximum 36 online presentations in each slot")
     if onsite_count > 24:
-        raise ValueError("Maximum 24 onsite-streamed presentations in total")
+        raise ValueError("Maximum 24 March 27 onsite-streamed presentations in total")
+    if any(day2_poster_counts[slot] > 12 for slot in SLOTS):
+        raise ValueError("Maximum 12 March 28 onsite posters selected from each online slot A/B/C")
     return pres
 
 
@@ -157,7 +164,7 @@ def make_program(presentations: list[dict]) -> str:
     out = [header("発表プログラム・資料", "3時間帯の発表一覧と公開許諾された資料のリンク")]
     out.append('''<div class="page-hero"><span class="site-label">ONLINE PROGRAM 2027</span><h1>発表プログラム・資料</h1>
 <p class="lead">3回の発表時間帯別に題名・発表者・ブースを掲載します。検索する場合はブラウザの「ページ内検索」（Ctrl+F、MacはCommand+F）をご利用ください。</p></div>
-<div class="em"><strong>oViceオンライン発表：36件 × 3回 ＝ 最大108件</strong>。個別サムネイルは不要です。公開資料は発表者の許諾範囲に限ります。</div>
+<div class="em"><strong>oViceオンライン発表：36件 × 3回 ＝ 最大108件</strong>。3月28日の現地ポスター発表枠はA・B・C各12件、計36件です。3月27日の国語研オンサイト配信とは別に管理します。個別サムネイルは不要です。公開資料は発表者の許諾範囲に限ります。</div>
 <nav class="slot-nav" aria-label="発表一覧の時間帯"><a href="#slot-A">A｜10:30〜12:00</a><a href="#slot-B">B｜12:30〜14:00</a><a href="#slot-C">C｜14:30〜16:00</a></nav>''')
     for slot,(time, topic) in SLOTS.items():
         arr = sorted(groups[slot],key=lambda p:int(p["booth"][1:]))
@@ -168,7 +175,8 @@ def make_program(presentations: list[dict]) -> str:
             out.append('<div class="program-table"><table><thead><tr><th>ブース</th><th>発表情報</th></tr></thead><tbody>')
             for p in arr:
                 booth = p["booth"]
-                onsite = ' <span class="pill">国語研現地配信</span>' if p.get('onsite',False) else ''
+                onsite = ' <span class="pill">3/27 国語研オンサイト配信</span>' if p.get('onsite',False) else ''
+                day2 = ' <span class="pill">3/28 現地ポスター</span>' if p.get('day2_poster',False) else ''
                 title=h(p['title']);authors=h(p['authors']);summary=h(p.get('summary',''))
                 extra=f'<p class="program-abstract">{summary}</p>' if summary else ''
                 links=[]
@@ -177,7 +185,7 @@ def make_program(presentations: list[dict]) -> str:
                     if v:
                         links.append(f'<a href="{h(v)}" target="_blank" rel="noopener noreferrer">{name}を開く</a>')
                 related=(f'<p class="program-link-row">{" ／ ".join(links)}</p>' if links else '<p class="small">資料リンク：準備中／非公開</p>')
-                out.append(f'<tr id="{slot}-{booth}"><td><a href="map-{slot.lower()}.html">{booth}</a></td><td><strong>{title}</strong>{onsite}<div class="program-author">{authors}</div>{extra}{related}</td></tr>')
+                out.append(f'<tr id="{slot}-{booth}"><td><a href="map-{slot.lower()}.html">{booth}</a></td><td><strong>{title}</strong>{onsite}{day2}<div class="program-author">{authors}</div>{extra}{related}</td></tr>')
             out.append('</tbody></table></div>')
         out.append('</section>')
     out.append('''<section><h2>公開資料について</h2><p>応募時PDFは非公開で受領します。採択後、公開に同意した資料のみ外部リンクを掲載します。公開許諾がないPDFはプログラムに載せません。</p>
