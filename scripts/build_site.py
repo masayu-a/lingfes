@@ -23,7 +23,7 @@ SLOTS = {
     "B": ("12:30〜14:00", "研究室・プロジェクト・企画・出版社・書店"),
     "C": ("14:30〜16:00", "完成研究"),
 }
-ONSITE_BOOTH_NUMBERS = set(range(29, 37))
+ONSITE_BOOTH_NUMBERS = {27, 28, 29, 30, 33, 34, 35, 36}
 
 
 def h(v: object) -> str:
@@ -49,7 +49,7 @@ def read_json(name: str) -> dict:
 
 
 def validate(site: dict, program: dict) -> list[dict]:
-    for key in ("staff_application_url", "presentation_application_url", "pdf_submission_url", "participation_application_url", "contact_url"):
+    for key in ("presentation_application_url", "pdf_submission_url", "contact_url"):
         https_url(site.get(key, ""), key)
     pres = program.get("presentations", [])
     if not isinstance(pres, list):
@@ -65,8 +65,8 @@ def validate(site: dict, program: dict) -> list[dict]:
         slot, booth = p.get("slot"), p.get("booth")
         if slot not in SLOTS:
             raise ValueError(f"Entry {i}: slot must be A/B/C")
-        if not re.fullmatch(r"B(?:0[1-9]|[12][0-9]|3[0-6])", str(booth)):
-            raise ValueError(f"Entry {i}: booth must be B01..B36")
+        if not re.fullmatch(r"P(?:0[1-9]|[12][0-9]|3[0-6])", str(booth)):
+            raise ValueError(f"Entry {i}: booth must be P01..P36")
         if (slot, booth) in used:
             raise ValueError(f"Entry {i}: duplicate (slot,booth) = {slot},{booth}")
         used.add((slot, booth))
@@ -81,7 +81,7 @@ def validate(site: dict, program: dict) -> list[dict]:
         if p.get("onsite", False):
             onsite_count += 1
             if int(booth[1:]) not in ONSITE_BOOTH_NUMBERS:
-                raise ValueError(f"Entry {i}: onsite presentation must be in B29..B36")
+                raise ValueError(f"Entry {i}: onsite presentation must be in P27–P30 or P33–P36")
     if any(slot_counts[x] > 36 for x in SLOTS):
         raise ValueError("Maximum 36 online presentations in each slot")
     if onsite_count > 24:
@@ -122,7 +122,7 @@ def make_map(slot: str, idx: dict[tuple[str, str], dict]) -> str:
     time, topic = SLOTS[slot]
     blocks = []
     for number in range(1, 37):
-        booth = f"B{number:02d}"
+        booth = f"P{number:02d}"
         presentation = idx.get((slot, booth))
         is_onsite_zone = number in ONSITE_BOOTH_NUMBERS
         classes = "booth" + (" onsite" if is_onsite_zone else "") + (" not-assigned" if not presentation else "")
@@ -140,10 +140,10 @@ def make_map(slot: str, idx: dict[tuple[str, str], dict]) -> str:
 <div class="page-hero"><span class="site-label">STATIC BOOTH MAP 2027 / {slot}</span><h1>{slot}枠｜{time}</h1><p class="lead">{h(topic)}：36ブースの配置図</p></div>
 <div class="em"><strong>オンライン発表は36件×3回＝最大108件。</strong> この図は{slot}枠の36ブースです。時間帯の変更は下のリンクでページを移動します。JavaScriptは使用しません。</div>
 {slot_nav(slot)}
-<section><h2>ブース配置</h2><p>左2列は運営・交流スペース、右側は6列×6行の発表ブースです。<strong>右下のB29〜B36</strong>を国語研現地配信候補として表示しています（最終割当てではありません）。</p>
+<section><h2>ブース配置</h2><p>左2列は運営・交流スペース、右側は6列×6行の発表ブースです。<strong>P27〜P30・P33〜P36</strong>を国語研現地配信候補として表示しています（最終割当てではありません）。</p>
 <div class="map-layout"><div class="map-admin"><div><strong>運営・管理</strong><small>受付・案内・技術支援</small></div><div><strong>自由交流</strong><small>雑談・相談・休憩</small></div></div>
-<div class="booths" aria-label="{slot}枠のB01からB36">{''.join(blocks)}</div></div>
-<div class="legend"><span><span class="dot"></span>通常ブース</span><span><span class="dot o"></span>右下：現地配信候補（8ブース）</span></div>
+<div class="booths" aria-label="{slot}枠のP01からP36">{''.join(blocks)}</div></div>
+<div class="legend"><span><span class="dot"></span>通常ブース</span><span><span class="dot o"></span>現地配信候補（8ブース）</span></div>
 <p class="muted-note">各ブースをクリックすると、この時間帯の発表プログラムに移動します。未採択・未登録のブースは時間帯の一覧へ移動します。</p></section>
 <section><h2>発表資料とoVice</h2><p>採択された発表の題名・発表者・公開許諾済みPDF・oViceのリンクはプログラムに掲載します。公開資料がまだない場合も、会場位置はブース番号で確認できます。</p>
 <p><a class="btn" href="program.html#slot-{slot}">{slot}枠の発表一覧へ →</a>　<a href="./">開催概要へ戻る</a></p></section>
@@ -240,8 +240,6 @@ def build() -> None:
     mapping={
         '{{PRESENTATION_LINK}}':link_or_pending('発表申込',site.get('presentation_application_url','')),
         '{{PDF_LINK}}':link_or_pending('PDF提出',site.get('pdf_submission_url','')),
-        '{{STAFF_LINK}}':link_or_pending('スタッフ応募',site.get('staff_application_url','')),
-        '{{PARTICIPATION_LINK}}':link_or_pending('参加申込',site.get('participation_application_url','')),
     }
     for token,content in mapping.items():
         if token not in template:
