@@ -49,7 +49,7 @@ def read_json(name: str) -> dict:
 
 
 def validate(site: dict, program: dict) -> list[dict]:
-    for key in ("presentation_application_url", "pdf_submission_url", "contact_url"):
+    for key in ("presentation_application_url", "pdf_submission_url", "contact_url", "online_participation_url", "ninjal_onsite_20270327_url", "onsite_20270328_url"):
         https_url(site.get(key, ""), key)
     pres = program.get("presentations", [])
     if not isinstance(pres, list):
@@ -238,6 +238,9 @@ def build() -> None:
     mapping={
         '{{PRESENTATION_LINK}}':link_or_pending('発表申込',site.get('presentation_application_url','')),
         '{{PDF_LINK}}':link_or_pending('PDF提出',site.get('pdf_submission_url','')),
+        '{{ONLINE_PARTICIPATION_LINK}}':link_or_pending('3月27日・オンライン参加申込',site.get('online_participation_url','')),
+        '{{DAY1_NINJAL_LINK}}':link_or_pending('3月27日・国語研からの参加申込',site.get('ninjal_onsite_20270327_url','')),
+        '{{DAY2_ONSITE_LINK}}':link_or_pending('3月28日・現地参加申込',site.get('onsite_20270328_url','')),
     }
     for token,content in mapping.items():
         if token not in template:

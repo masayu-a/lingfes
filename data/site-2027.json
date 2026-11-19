@@ -6,5 +6,8 @@
   "pdf_submission_url": "",
   "contact_url": "",
   "site_base_url": "https://www2.ninjal.ac.jp/lingfes/",
-  "note": "申込URLを設定する場合は data/site-2027.json を更新してください。未設定のリンクは公開HTMLに表示しません。"
+  "note": "申込URLを設定する場合は data/site-2027.json を更新してください。未設定のリンクは公開HTMLに表示しません。",
+  "online_participation_url": "",
+  "ninjal_onsite_20270327_url": "",
+  "onsite_20270328_url": ""
 }
