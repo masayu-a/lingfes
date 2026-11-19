@@ -6,5 +6,5 @@
   "pdf_submission_url": "",
   "contact_url": "",
   "site_base_url": "https://www2.ninjal.ac.jp/lingfes/",
-  "note": "発表申込・PDF提出のリンクが確定したらdata/site-2027.jsonを編集。空欄は「準備中」として表示。"
+  "note": "申込URLを設定する場合は data/site-2027.json を更新してください。未設定のリンクは公開HTMLに表示しません。"
 }

@@ -91,7 +91,7 @@ def validate(site: dict, program: dict) -> list[dict]:
 
 def link_or_pending(label: str, url: str) -> str:
     if not url:
-        return f'<span class="btn disabled" aria-disabled="true">{h(label)}：準備中</span>'
+        return ""
     return f'<a class="btn" href="{h(url)}" target="_blank" rel="noopener noreferrer">{h(label)} →</a>'
 
 
@@ -106,8 +106,8 @@ def header(title: str, description: str, active: str = "") -> str:
 
 
 def footer() -> str:
-    return '''</main><footer class="footer"><p>言語学フェス2027実行委員会（開催準備中）</p><p><a href="./">2027年の案内</a> ／ <a href="../">年度別記録</a></p>
-<p class="small">公開に同意された情報のみ掲載します。個人情報・非公開PDF・申込名簿は収録しません。</p></footer></body></html>'''
+    return '''</main><footer class="footer"><p>言語学フェス2027</p><p><a href="./">2027年の案内</a> ／ <a href="../">年度別記録</a></p>
+</footer></body></html>'''
 
 
 def slot_nav(current: str = "") -> str:
@@ -138,9 +138,9 @@ def make_map(slot: str, idx: dict[tuple[str, str], dict]) -> str:
         blocks.append(f'<a class="{classes}" href="{href}" aria-label="{aria}"><strong>{booth}</strong>{subtitle}</a>')
     return f'''{header(f"{slot}枠のブース地図", "JavaScriptを使用しない時間帯別36ブース地図")}
 <div class="page-hero"><span class="site-label">STATIC BOOTH MAP 2027 / {slot}</span><h1>{slot}枠｜{time}</h1><p class="lead">{h(topic)}：36ブースの配置図</p></div>
-<div class="em"><strong>オンライン発表は36件×3回＝最大108件。</strong> この図は{slot}枠の36ブースです。時間帯の変更は下のリンクでページを移動します。JavaScriptは使用しません。</div>
+<div class="em"><strong>オンライン発表は36件×3回＝最大108件。</strong> この図は{slot}枠の36ブースです。別の時間帯の配置は下のリンクから確認できます。</div>
 {slot_nav(slot)}
-<section><h2>ブース配置</h2><p>左2列は運営・交流スペース、右側は6列×6行の発表ブースです。<strong>P27〜P30・P33〜P36</strong>を国語研現地配信候補として表示しています（最終割当てではありません）。</p>
+<section><h2>ブース配置</h2><p>左側は運営・交流エリア、右側は6列×6行の発表ブースです。<strong>P27〜P30・P33〜P36</strong>を国語研現地配信候補として表示しています（最終割当てではありません）。</p>
 <div class="map-layout"><div class="map-admin"><div><strong>運営・管理</strong><small>受付・案内・技術支援</small></div><div><strong>自由交流</strong><small>雑談・相談・休憩</small></div></div>
 <div class="booths" aria-label="{slot}枠のP01からP36">{''.join(blocks)}</div></div>
 <div class="legend"><span><span class="dot"></span>通常ブース</span><span><span class="dot o"></span>現地配信候補（8ブース）</span></div>
@@ -181,7 +181,7 @@ def make_program(presentations: list[dict]) -> str:
             out.append('</tbody></table></div>')
         out.append('</section>')
     out.append('''<section><h2>公開資料について</h2><p>応募時PDFは非公開で受領します。採択後、公開に同意した資料のみ外部リンクを掲載します。公開許諾がないPDFはプログラムに載せません。</p>
-<p>当サイトはHTMLとCSSの静的ページです。JavaScriptや検索API、ログイン機能は使用していません。</p></section>''')
+</section>''')
     out.append(footer())
     return '\n'.join(out)
 
@@ -209,7 +209,7 @@ def make_archive() -> None:
             ids.add(pid); groups[slot].append(e)
         source=https_url(d.get('source_url',''),f'{y} source_url')
         if not source: raise ValueError(f'{y}: missing source')
-        document=[f"""<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="言語学フェス{y}の公開プログラムにある発表タイトルの保存記録"><title>言語学フェス{y} 発表タイトル一覧</title><link rel="stylesheet" href="../assets/styles.css"></head><body><a href="#main" class="skip">本文へ移動</a><header><nav aria-label="年度別ナビゲーション"><a class="brand" href="../">言語学フェス</a><div class="links"><a href="../#archive">年度別アーカイブ</a><a href="../2027/">2027年</a></div></nav></header><main id="main"><div class="page-hero"><span class="site-label">ARCHIVE {y}</span><h1>言語学フェス{y}</h1><p class="lead">公開プログラムから記録した発表タイトル：{len(entries)}件</p></div><p class="muted-note">原典：<a href="{h(source)}" target="_blank" rel="noopener noreferrer">{y}年の公開プログラムを見る</a>。発表番号と題名のみを転記しています。著者・所属・PDFは掲載していません。転記表記は最終照合前です。</p>"""]
+        document=[f"""<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="言語学フェス{y}の公開プログラムにある発表タイトルの保存記録"><title>言語学フェス{y} 発表タイトル一覧</title><link rel="stylesheet" href="../assets/styles.css"></head><body><a href="#main" class="skip">本文へ移動</a><header><nav aria-label="年度別ナビゲーション"><a class="brand" href="../">言語学フェス</a><div class="links"><a href="../#archive">年度別アーカイブ</a><a href="../2027/">2027年</a></div></nav></header><main id="main"><div class="page-hero"><span class="site-label">ARCHIVE {y}</span><h1>言語学フェス{y}</h1><p class="lead">公開プログラムから記録した発表タイトル：{len(entries)}件</p></div><p class="muted-note">原典：<a href="{h(source)}" target="_blank" rel="noopener noreferrer">{y}年の公開プログラムを見る</a>。発表番号と発表タイトルを掲載しています。</p>"""]
         if y==2021:
             document.append('<p class="small">注記：公開プログラムで確認できた題名は42件です。別の開催報告で言及された44件との差分は未確認です。</p>')
         for slot,items in groups.items():
@@ -218,7 +218,7 @@ def make_archive() -> None:
             for entry in items:
                 document.append(f'<tr><td>{h(entry["id"])}</td><td>{h(entry["title"])}</td></tr>')
             document.append('</tbody></table></div></section>')
-        document.append('<section><h2>出典・保存方針</h2><p>題名を記録した最小限の書誌的アーカイブです。公開プログラム以外からの推測による発表情報の補完はしていません。題名の修正はGitHubのデータファイルを更新し、静的HTMLを再生成して反映します。</p><p><a href="../#archive">他の年度を見る</a></p></section></main><footer class="footer"><strong>言語学フェス 年度別アーカイブ</strong><p>元の開催サイトも引き続き出典として参照してください。</p></footer></body></html>')
+        document.append('<section><h2>出典について</h2><p>公開プログラムの記載に基づく発表タイトル一覧です。発表内容の詳細は各年度の原典ページをご参照ください。</p><p><a href="../#archive">他の年度を見る</a></p></section></main><footer class="footer"><strong>言語学フェス 年度別アーカイブ</strong><p>元の開催サイトも引き続き出典として参照してください。</p></footer></body></html>')
         output=PUBLIC/str(y)/'index.html'
         output.parent.mkdir(parents=True,exist_ok=True)
         output.write_text('\n'.join(document),encoding='utf-8')
@@ -231,11 +231,9 @@ def build() -> None:
     if PUBLIC.exists():
         shutil.rmtree(PUBLIC)
     (PUBLIC/'assets').mkdir(parents=True, exist_ok=True)
-    (PUBLIC/'2026').mkdir(parents=True, exist_ok=True)
     (PUBLIC/'2027').mkdir(parents=True, exist_ok=True)
     shutil.copyfile(SOURCE/'assets/styles.css', PUBLIC/'assets/styles.css')
     shutil.copyfile(SOURCE/'index.html', PUBLIC/'index.html')
-    shutil.copyfile(SOURCE/'2026/index.html', PUBLIC/'2026/index.html')
     template=(SOURCE/'2027/index.html').read_text(encoding='utf-8')
     mapping={
         '{{PRESENTATION_LINK}}':link_or_pending('発表申込',site.get('presentation_application_url','')),
@@ -245,10 +243,13 @@ def build() -> None:
         if token not in template:
             raise ValueError(f'Missing placeholder in src/2027/index.html: {token}')
         template=template.replace(token,content)
+    template = re.sub(r'<div class="cta-group">\s*</div>', "", template)
     (PUBLIC/'2027/index.html').write_text(template,encoding='utf-8')
-    (PUBLIC/'2027/program.html').write_text(make_program(pres),encoding='utf-8')
-    for slot in SLOTS:
-        (PUBLIC/f'2027/map-{slot.lower()}.html').write_text(make_map(slot,idx),encoding='utf-8')
+    # Only publish program and map pages after real presentation entries exist.
+    if pres:
+        (PUBLIC/'2027/program.html').write_text(make_program(pres),encoding='utf-8')
+        for slot in SLOTS:
+            (PUBLIC/f'2027/map-{slot.lower()}.html').write_text(make_map(slot,idx),encoding='utf-8')
     (PUBLIC/'.nojekyll').write_bytes(b'')
     make_archive()
     # Server is intentionally non-programmable: only plain HTML/CSS published.

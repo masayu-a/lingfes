@@ -12,10 +12,10 @@
 2. `data/` の設定を確定し、GitHubで編集した内容に合わせて `python3 scripts/build_site.py` を実行。
 3. `python3 scripts/validate_site.py` で全リンク・見出しアンカーとJavaScript不使用を確認。
 4. `public/` の**中身だけ**を公開先 `/lingfes/` にコピーする。`src/`, `data/`, `scripts/`, `.github/` は公開しない。
-5. `https://www2.ninjal.ac.jp/lingfes/`、`.../2027/`、`.../2027/program.html`、`.../2027/map-a.html`〜`map-c.html` を表示・リンク・印刷確認。
+5. `https://www2.ninjal.ac.jp/lingfes/`、`.../2027/`、過年度ページを表示・リンク・印刷確認。発表情報の登録後は、生成されたプログラム・地図も確認する。
 6. 不要な個人情報・非公開PDF・試験用の架空データを含まないことを確認。
 
-本サンプルの公開可能ファイルは `.html` と `.css` とGitHub Pages用 `.nojekyll` のみです。`.nojekyll` はwww2では不要なら省略できます。
+公開対象は生成済みの `.html` と `.css` です。GitHub Pages用 `.nojekyll` はwww2では不要なら省略できます。現在、発表データがないため2027年のプログラム・地図は生成しません。
 
 ## GitHub Pagesプレビュー
 
@@ -42,12 +42,15 @@ rsync -av public/ approved-user@example.host:/approved/www/lingfes/
 ```text
 /lingfes/index.html
 /lingfes/assets/styles.css
-/lingfes/2026/index.html
+/lingfes/2021/index.html ～ /lingfes/2026/index.html
 /lingfes/2027/index.html
+# 発表データ登録後にのみ生成：
 /lingfes/2027/program.html
-/lingfes/2027/map-a.html
-/lingfes/2027/map-b.html
-/lingfes/2027/map-c.html
+/lingfes/2027/map-a.html ～ /lingfes/2027/map-c.html
 ```
 
 www2側で必要なのは通常の静的ファイル配信のみ。時間帯の地図選択、発表詳細への移動、PDFへのリンクはHTMLの `<a href="...">` のみを利用します。
+
+## 既存ファイルの取扱い
+
+`rsync` には `--delete` を付けず、公開許諾済みPDFなどの既存ファイルを保護します。このため、前回公開済みの空のプログラムや地図がサーバーに残っている場合は、管理者が該当する4つのHTMLファイルだけを個別に確認して削除してください。
