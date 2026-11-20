@@ -1,0 +1,3 @@
+# For running the lottery locally (not needed to read the code on GitHub).
+yfinance>=0.2.60
+pandas>=1.5
