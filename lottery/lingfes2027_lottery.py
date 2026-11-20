@@ -17,7 +17,7 @@
     ・上記を除いた申込に対し、A/B/C各枠で次の文字列を計算する。
         lingfes2027|A|58123.45|0001
       SHA-256の16進64桁の昇順で並べ、各枠の上位36件をブースへ。
-      定員超過の残りは繰上げ候補であり、ギャラリーにも回る。
+      37位以降はフェス・ギャラリー対象となり、辞退が生じても繰上げ採択しない。
 
 【公開の安全性】
   ・公開用HTMLには申込番号、枠、結果だけを掲載。著者名・連絡先は載せない。
@@ -297,8 +297,8 @@ def determine_validity(records: list[dict]) -> dict[str, object]:
       ③ 事務局の「共著申込ブース移動」リストにある応募もギャラリーへ。
       ④ 残った応募だけをハッシュ抽選に入れる。
 
-    ギャラリーへ移した申込はReject扱いにしない。また、ギャラリー移動した
-    申込はキャンセルによるブース繰上げの対象にはならない。
+    ギャラリーへ移した申込はReject扱いにしない。抽選で定員を超えた
+    申込も同様にギャラリー対象となる。辞退後の繰上げ採択は行わない。
     """
     manual = configured_lists(records)
     no_lottery = manual["multiple_reject"] | manual["test_reject"]
@@ -451,7 +451,7 @@ def make_ranking(records: list[dict], price_date: str, close_price: str, phase: 
             out.append({
                 "phase": phase, "price_date": price_date, "nikkei_close": close_price,
                 "slot": slot, "application_no": r["application_no"],
-                "rank": i, "result": "ブース割当候補" if i <= BOOTH_CAPACITY else "ギャラリー・繰上げ候補",
+                "rank": i, "result": "ブース割当候補" if i <= BOOTH_CAPACITY else "フェス・ギャラリー対象（定員超過）",
                 "sha256": r["sha256"], "hash_input": r["hash_input"],
                 "authors": r["authors"], "title": r.get("title", ""),
             })
@@ -548,12 +548,12 @@ th{{background:#e7eef5;color:var(--navy)}}
 <p class='small'>最終受付番号：{esc(f'{LAST_PRESENTER_ID:04d}')} / {esc(summary)}</p>
 <h2>ブース割当候補（各枠最大{esc(BOOTH_CAPACITY)}件）</h2>
 {table(booths, rcols)}
-<h2>ブース満席によるギャラリー・繰上げ候補</h2>
-<p class='small'>ブース採択者の辞退があった場合、下記の順位に従って繰り上げます。</p>
+<h2>定員超過によるフェス・ギャラリー対象</h2>
+<p class='small'>抽選37位以降の発表は、資料の公開に同意した場合にフェス・ギャラリーへ掲載します。採択後に辞退が生じても、繰上げ採択は行いません。</p>
 {table(overflow, rcols)}
 <h2>共著申込によるフェス・ギャラリー移動</h2>
 <p class='small'>同一枠内で共著者が重複するため、最後の申込のみブース抽選に残しました。
-下記の発表はRejectではなく資料展示枠です（ブース繰上げ対象外）。</p>
+下記の発表はRejectではなく、資料の公開に同意した場合にフェス・ギャラリーへ掲載する対象です。</p>
 {table(coauthors, cols)}
 <h2>多重申込によるReject一覧</h2>
 <p class='small'>事務局が多重申込として確認し、抽選およびギャラリーへの掲載対象から除外した番号です。</p>
@@ -594,7 +594,7 @@ def main() -> None:
     print("順位: SHA-256 64桁16進文字列の昇順（A/B/Cごと）")
     for slot in SLOTS:
         in_slot = [r for r in ranked if r["slot"] == slot]
-        print(f"  {slot}枠: 抽選対象{len(in_slot)} / ブース{min(len(in_slot), BOOTH_CAPACITY)} / 繰上げ{max(0, len(in_slot)-BOOTH_CAPACITY)}")
+        print(f"  {slot}枠: 抽選対象{len(in_slot)} / ブース{min(len(in_slot), BOOTH_CAPACITY)} / 定員超過ギャラリー対象{max(0, len(in_slot)-BOOTH_CAPACITY)}")
 
     outdir = Path.cwd() / OUTPUT_DIR_NAME
     outdir.mkdir(parents=True, exist_ok=True)
@@ -602,10 +602,14 @@ def main() -> None:
     internalcols = ["application_no", "slot", "status", "reason", "last_conflicting_ids", "authors", "title"]
     pubcols = ["phase", "price_date", "nikkei_close", "slot", "application_no", "rank", "result", "sha256", "hash_input"]
     # 内部用CSVは著者名等を含むため www2 / GitHub public/ に置かない。
+    # 定員超過はギャラリー対象であり、補欠・繰上げ候補ではない。
     write_csv(outdir / "全受付判定_内部用.csv", [_review_row(r) for r in records], internalcols)
     write_csv(outdir / "抽選順位_内部用.csv", ranked, allcols)
     write_csv(outdir / "ブース割当候補.csv", [r for r in ranked if r["result"] == "ブース割当候補"], allcols)
-    write_csv(outdir / "定員超過_繰上げ候補_内部用.csv", [r for r in ranked if r["result"] != "ブース割当候補"], allcols)
+    # 旧版の繰上げ候補CSVが残ると運用上誤解を招くため、この既知の旧ファイルだけ削除。
+    # 他の成果物や入力CSVは消さない。
+    (outdir / "定員超過_繰上げ候補_内部用.csv").unlink(missing_ok=True)
+    write_csv(outdir / "定員超過_ギャラリー対象_内部用.csv", [r for r in ranked if r["result"] != "ブース割当候補"], allcols)
     write_csv(outdir / "多重申込Reject_内部用.csv", [_review_row(r) for r in records if r["status"]=="REJECT_MULTIPLE"], internalcols)
     write_csv(outdir / "試験登録Reject_内部用.csv", [_review_row(r) for r in records if r["status"]=="REJECT_TEST"], internalcols)
     write_csv(outdir / "共著申込ギャラリー移動_内部用.csv", [_review_row(r) for r in records if r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL")], internalcols)
@@ -649,10 +653,13 @@ def main() -> None:
         "hash_template": "lingfes2027|{slot}|{nikkei_close_2dp}|{application_no_4d}",
         "sort_order": "ascending",
         "booth_capacity_per_slot": BOOTH_CAPACITY,
+        "waitlist_or_promotion": False,
+        "gallery_publication_requires_consent": True,
         "last_application_number": f"{LAST_PRESENTER_ID:04d}",
         "counts": {s: {
             "lottery_eligible": sum(r["slot"] == s and r["status"] == "LOTTERY" for r in records),
             "booth_selected": sum(r["slot"] == s and r["result"] == "ブース割当候補" for r in ranked),
+            "capacity_gallery": sum(r["slot"] == s and r["result"] == "フェス・ギャラリー対象（定員超過）" for r in ranked),
             "coauthor_gallery": sum(r["slot"] == s and r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL") for r in records),
             "multiple_reject": sum(r["slot"] == s and r["status"] == "REJECT_MULTIPLE" for r in records),
         } for s in SLOTS},
@@ -682,11 +689,13 @@ def main() -> None:
         "max_application_number": MAX_APPLICATION_NUMBER,
         "last_presenter_id": f"{LAST_PRESENTER_ID:04d}",
         "booth_capacity_per_slot": BOOTH_CAPACITY,
+        "waitlist_or_promotion": False,
         "manual_lists": {key: sorted(ids) for key, ids in details["manual"].items()},
         "categories": dict(sorted(counts.items())),
         "counts_by_slot": {slot: {
             "lottery": sum(r["slot"]==slot and r["status"]=="LOTTERY" for r in records),
             "booths": sum(r["slot"]==slot and r["result"]=="ブース割当候補" for r in ranked),
+            "capacity_gallery": sum(r["slot"]==slot and r["result"]=="フェス・ギャラリー対象（定員超過）" for r in ranked),
             "coauthor_gallery": sum(r["slot"]==slot and r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL") for r in records),
         } for slot in SLOTS},
         "sha256_private_application_decisions": application_fingerprint,

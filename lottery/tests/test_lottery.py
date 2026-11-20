@@ -143,6 +143,7 @@ class LotteryRuleTests(unittest.TestCase):
             root=pathlib.Path(t)/'out'
             for name in ('多重申込Reject_内部用.csv','試験登録Reject_内部用.csv',
                          '共著申込ギャラリー移動_内部用.csv',
+                         '定員超過_ギャラリー対象_内部用.csv',
                          '共著者別_最後の発表者ID_内部用.csv',
                          '多重申込Reject_公開用.csv','web_public/index.html',
                          'web_public/共著者重複_ギャラリー移動一覧.csv',
@@ -154,6 +155,8 @@ class LotteryRuleTests(unittest.TestCase):
             self.assertNotIn('reject</td>',h)
             self.assertNotIn('SecretAuthor',h)
             self.assertIn('0005',h)
+            self.assertNotIn('繰上げ候補', h)
+            self.assertFalse((root/'定員超過_繰上げ候補_内部用.csv').exists())
             # Web公開専用フォルダには内部用の氏名つき台帳を入れない。
             public_files={p.name for p in (root/'web_public').iterdir()}
             self.assertFalse(any('内部用' in name for name in public_files))
@@ -204,6 +207,22 @@ class LotteryRuleTests(unittest.TestCase):
             public_html=(folder/'index.html').read_text(encoding='utf-8')
             self.assertIn('0003',public_html)
             self.assertNotIn('>0004<',public_html)
+
+
+    def test_capacity_37th_is_gallery_and_no_waitlist(self):
+        # 定員36件を超えた場合、37位はギャラリー対象。繰上げはない。
+        rows = [self.row(i, 'A', f'Person{i}') for i in range(1, 40)]
+        rows, _ = self.run_classification(rows, last=39)
+        with patch.object(lottery, 'BOOTH_CAPACITY', 36):
+            ranked = lottery.make_ranking(rows, '2027-02-02', '58123.45', 'FINAL')
+            self.assertEqual(len([r for r in ranked if r['result'] == 'ブース割当候補']), 36)
+            overflow = [r for r in ranked if r['result'] == 'フェス・ギャラリー対象（定員超過）']
+            self.assertEqual(len(overflow), 3)
+            self.assertEqual([r['rank'] for r in overflow], [37, 38, 39])
+            html = lottery.make_public_html(rows, ranked, '2027-02-02', '58123.45', 'FINAL')
+            self.assertIn('繰上げ採択は行いません', html)
+            self.assertNotIn('繰上げ候補', html)
+            self.assertNotIn('繰り上げます', html)
 
 
 if __name__ == '__main__':
