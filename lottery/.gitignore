@@ -1,10 +1,11 @@
-# Never commit application data, draw outputs, notebook execution artifacts.
+# Applicant master data and draw results contain personal details; never commit.
 .venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 lingfes2027_lottery_results/
 lingfes2027_lottery_results.zip
+lingfes2027_lottery_results_web_public.zip
 applications.csv
 applications_*.csv
 *_internal.csv
