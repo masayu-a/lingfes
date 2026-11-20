@@ -1,0 +1,10 @@
+# Never commit application data, draw outputs, notebook execution artifacts.
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+lingfes2027_lottery_results/
+lingfes2027_lottery_results.zip
+applications.csv
+applications_*.csv
+*_internal.csv
