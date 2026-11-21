@@ -1,11 +1,11 @@
-# Applicant master data and draw results contain personal details; never commit.
+# 資料・応募者・回答・内部抽選結果は公開リポジトリにコミットしない
 .venv/
 __pycache__/
-*.pyc
 .ipynb_checkpoints/
+*.pyc
 lingfes2027_lottery_results/
 lingfes2027_lottery_results.zip
-lingfes2027_lottery_results_web_public.zip
-applications.csv
+*.xlsx
+responses_*.csv
 applications_*.csv
-*_internal.csv
+!sample_forms_responses.xlsx

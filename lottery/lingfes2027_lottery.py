@@ -1,729 +1,749 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""言語学フェス2027 ブース抽選・Reject・フェスギャラリー振分け (Colab / Mac)
+"""言語学フェス2027：Microsoft Forms回答から行う3種類の公開抽選。
 
-【今回の重要な区別】
-  Reject（抽選・資料掲載の両方から除外）
-    ・MULTIPLE_APPLICATION_REJECT_IDS: 多重申込として確認済みの受付番号
-    ・TEST_REGISTRATION_REJECT_IDS: 運営による試験用の受付番号
+【何をするか】
+  (1) Microsoft Forms「回答をExcelで開く」から取得した XLSX / CSV を読む。
+      A・B・C通算の「ID」列を申込番号とする（1 -> 0001）。
+  (2) 2027-02-01 12:00 JSTより前の回答だけを受付。新規／修正／取消を照合する。
+      修正・取消は旧IDと主発表者の氏名・メールアドレスの一致が必須。
+      以前の回答は消さずに内部の履歴に残し、最後の修正申込のみ有効。
+  (3) 事務局指定の試験登録・多重Rejectを除外し、同一コアタイムの共著
+      重複は最後の申込だけをブース抽選へ、古い申込をギャラリー対象にする。
+  (4) 2027-02-01の日経平均終値を使い、ブース A/B/C を各36件選ぶ。
+  (5) ブース採択者の希望者から、3月28日のポスター A/B/C を各8件選ぶ。
+  (6) 3月27日現地配信・参加は「人」を単位として32席選ぶ。同一人物が
+      A/C両方に申し込んでも1席。居室あり・実行委員は32席の定員外。
+      現地ポスター採択者のうち希望者を優先し、残席を抽選する。
+  (7) 全結果を事務局用CSVに、個人情報を除いた結果を web_public/ に出力。
 
-  ギャラリー移動（Rejectではない。ブース抽選だけから除外）
-    ・同じA/B/Cの枠で、一人でも共著者が重なる場合、最後の申込だけ
-      ブース抽選に残し、先の申込はフェス・ギャラリーに移す。
-    ・COAUTHOR_GALLERY_MOVE_IDS: 事務局が明示的に移動指定した申込
-    ・AとCなど、枠が異なる場合には同じ著者が重複してもよい。
+【SHA-256の厳密な仕様】
+  - 終値 : 例 58123.45（カンマなし、小数点以下2桁。架空の数字）
+  - 申込番号 : 4桁ゼロパディング。例 1→0001、12→0012、123→0123
+  - SHA-256(UTF-8文字列)の16進64桁表記を「昇順（小さい順）」に並べる。
+  - ブース : lingfes2027|A|58123.45|0001
+  - ポスター : lingfes2027|POSTER|A|58123.45|0001
+  - 現地配信 : lingfes2027|ONSITE|58123.45|0001
+    ※現地配信は1人1席。複数の有効申込がある場合は最小IDを代表IDとする。
+    ※ハッシュ値が万一一致した場合は代表IDの昇順とする。
 
-  抽選対象
-    ・上記を除いた申込に対し、A/B/C各枠で次の文字列を計算する。
-        lingfes2027|A|58123.45|0001
-      SHA-256の16進64桁の昇順で並べ、各枠の上位36件をブースへ。
-      37位以降はフェス・ギャラリー対象となり、辞退が生じても繰上げ採択しない。
+【予行演習／本番】
+  - 締切 2027-02-01 12:00 JST。終値確定は同日午後（取引所は15:30まで）。
+  - 本番判定は同日16:00 JST以降とし、その日の終値を厳密に要求する。
+    取得できない場合は「前日終値」で代用せず停止する。
+  - それ以前の実行は直近の確定済み終値で PREVIEW として動作する。
+  - 取得元はYahoo Finance (^N225)。正式公表前には日経公式終値と照合。
+  - 本番用フォーム回答Excel、試験登録／Rejectリストを終値判明前に固定。
 
-【公開の安全性】
-  ・公開用HTMLには申込番号、枠、結果だけを掲載。著者名・連絡先は載せない。
-  ・web_public/ は公開用ファイルのみを集めたフォルダ。内部原簿はコピーしない。
-  ・多重申込Rejectは番号と事由を公開し、試験登録の番号は原則公開しない。
-  ・PREVIEW（予行演習）では『公開不可』を表示。確認前に配布しない。
-  ・事務局指定リスト、最後のID、応募原簿は株価確定前に凍結する。
-  ・Yahoo Financeの取得値は本番公表前に公表元の終値と必ず照合する。
+【公開上の注意】
+  - 入力Excelには氏名・メールアドレス・資料アップロードURLが含まれる。
+    GitHubや公開サーバーに決して置かないこと。
+  - web_public/ は匿名申込IDと判定だけ。試験登録のIDは公開しない。
+  - PREVIEWは絶対に公表しない。web_publicの内容は事務局の承認後に公開。
+  - このプログラムが扱う32席は、この発表申込フォームの主発表者用。
+    2月8日以降募集する一般参加者を同じ32席へ含める場合は、別の応募原簿と
+    締切後の公開数値による別抽選が必要。既知の2月1日終値で後から応募
+    した参加者を公平に抽選することはできない。
 """
-
 from __future__ import annotations
 
+# ================== 設定：通常はこの部分だけ確認 ===========================
+INPUT_FILE = ""                 # 空欄ならGoogle Colabでファイル選択。MacはCLI --input。
+OUTPUT_DIR = "lingfes2027_lottery_results"
+MODE = "auto"                  # auto / preview / final
+MAX_APPLICATION_NUMBER = 9999  # 受付番号の上限。欠番・試験番号も番号を再利用しない。
+LAST_PRESENTER_ID = 0          # 0=Excelの最大IDを自動取得。固定時は実際の最終回答ID。
+FORM_EXPORT_TIMEZONE = "Asia/Tokyo"  # Excelの「完了時刻」のタイムゾーン。要確認。
+
+# 事務局で確定済みの番号を指定。整数と4桁文字列の両方が使える。
+MULTIPLE_APPLICATION_REJECT_IDS = []   # 多重申込：Rejectし、受付番号をWeb公開。
+COAUTHOR_GALLERY_MOVE_IDS = []        # 共著重複：ブース対象外、ギャラリー候補。
+TEST_REGISTRATION_REJECT_IDS = []      # 試験登録：完全除外。受付番号は非公開。
+
+BOOTH_CAPACITY = 36         # A/B/Cそれぞれ最大36件
+POSTER_CAPACITY = 8         # A/B/Cそれぞれ最大8件（3/28、計24件）
+ONSITE_CAPACITY = 32        # 3/27、主発表者1人1席（居室・委員は定員外）
+DRAW_DATE = "2027-02-01"
+DEADLINE_JST = "2027-02-01 12:00:00"
+CLOSE_READY_HOUR_JST = 16  # 時刻は安全側の目安。終値のデータ公開時刻は保証しない。
+PUBLIC_INCLUDE_TITLES = False  # Trueにするのは公開許諾を別途確認した場合だけ。
 # ===========================================================================
-# 1. 設定: 普段変更するのは原則としてこの欄のみ
-# ===========================================================================
 
-# [重要] 最大の申込番号。001〜この数字までを扱う。全枠通算。
-# 例: 500 → 0001〜0500 が発行されうる。欠番があっても問題ない。
-MAX_APPLICATION_NUMBER = 150
-
-# 実際に受け付けた「最後の申込番号」。入力欄の意味を明確にするため
-# LAST_PRESENTER_ID という名前にしているが、個々の著者IDではなく
-# A/B/C通算のフォーム受付番号である（例: 0127 → 127番まで受け付けた）。
-# MAX_APPLICATION_NUMBER はプログラムの上限、こちらは実際の締切時点。
-LAST_PRESENTER_ID = 150
-
-# ================================================================
-# 受付の手動判定リスト：要素は4桁文字列（整数 12 でも可）。
-# 実務では事務局で事由を確認したうえで番号を登録する。
-# 重複する番号を複数のリストに書くとプログラムは停止する。
-# ================================================================
-
-# ① 多重申込等により、資料掲載も含め完全にRejectする番号。
-#    この番号・理由は、公開用HTMLの「Reject一覧」に掲載する。
-#    共著者が重なるだけの場合はここに入れない（下のギャラリー規則）。
-MULTIPLE_APPLICATION_REJECT_IDS = []
-
-# ② 自動判定とは別に、共著申込をギャラリーへ移す指定番号。
-#    ここにある申込はRejectではなく、資料展示枠に残る。
-#    自動判定で見つかる共著者重複は書かなくても移動される。
-COAUTHOR_GALLERY_MOVE_IDS = []
-
-# ③ 入力フォームの動作確認など、試験用として登録した番号。
-#    抽選・ギャラリーともに対象外。番号自体は公開ページへ出さない。
-TEST_REGISTRATION_REJECT_IDS = []
-
-# ④ 公開ページの発表タイトルを表示するか。
-#    Rejectや重複判定が含まれるので、公開の了承が取れるまでFalse推奨。
-PUBLIC_INCLUDE_TITLES = False
-
-# 各コアタイムのブース上限（現在は各36件）
-BOOTH_CAPACITY = 36
-
-# "demo" または "csv" を指定する。
-# demo: 0001〜MAX_APPLICATION_NUMBER の架空の申込をA/B/Cに順番に割り当てる。
-#       まず動作を確認するためのモードで、実際の採否ではない。
-# csv : 実際のCSVに登録されている申込だけを抽選対象にする。
-INPUT_MODE = "demo"
-
-# INPUT_MODE="csv" の場合、CSVを置いたパス。
-# Google Colabでは空文字のままにするとアップロード画面が開く。
-# Macでは、例: "/Users/masayu-a/Downloads/applications.csv" と設定する。
-CSV_PATH = ""
-
-# "auto" | "preview" | "final" (詳細は先頭の説明を参照)
-MODE = "auto"
-
-# 本番で使う日付。2027年2月2日（火）の日経平均終値。
-FINAL_PRICE_DATE = "2027-02-02"
-
-# 日経平均終値は日本時間15:30ごろに確定するが、データ配信遅延を考慮し
-# 日本時間16:00以降を、その日の終値を使用できる目安とする。
-# 16:00以降でもデータが未到着の場合、本番ではエラーとする。
-CLOSE_READY_HOUR = 16
-
-# ファイルの保存先。Colabでは /content 以下、Macでは実行ディレクトリ以下。
-OUTPUT_DIR_NAME = "lingfes2027_lottery_results"
-
-# ===========================================================================
-# 2. ライブラリ: 以下は通常変更不要
-# ===========================================================================
+import argparse
 import csv
 import hashlib
+import html
 import json
-import math
 import re
+import shutil
 import unicodedata
-from collections import Counter
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-TIMEZONE = ZoneInfo("Asia/Tokyo")
 SLOTS = ("A", "B", "C")
-HASH_PREFIX = "lingfes2027"
+JST = ZoneInfo("Asia/Tokyo")
+# Microsoft Formsは質問文をExcelの列名に使用する。文面が変更された場合にも
+# 部分一致で吸収するが、曖昧なら誤処理せず停止し、列名を画面に表示する。
+FIELD_PATTERNS = {
+    "id": ("ID", "回答ID", "回答番号", "response id", "respondent id"),
+    "completed": ("完了時刻", "完了日時", "completion time", "submit time", "終了時刻"),
+    "name": ("主発表者の氏名",),
+    "email": ("主発表者のメールアドレス",),
+    "action": ("手続きの種類",),
+    "old_modify": ("以前の受付番号(申込修正", "修正前の受付番号"),
+    "old_cancel": ("以前の受付番号(申込取消", "取消する発表の受付番号"),
+    "slot": ("発表するコアタイム",),
+    "title": ("発表題目",),
+    "summary": ("発表概要",),
+    "affiliation": ("主発表者の所属",),
+    "coauthors": ("共同発表者の氏名",),
+    "consent": ("発表者全員から同意を得て",),
+    "anti": ("アンチハラスメントポリシーを確認した",),
+    "privacy": ("個人情報保護ポリシーを確認した",),
+    "onsite": ("現地配信・参加を希望する", "現地配信を希望する"),
+    "poster": ("現地ポスター発表を希望する",),
+    "gallery": ("フェス・ギャラリーへの資料掲載を希望する",),
+    "online": ("オンライン参加を希望する",),
+    "organizer": ("次回以降の言語学フェスの運営に参加したい",),
+    "upload": ("発表資料をアップロード", "発表資料のアップロード"),
+}
+REQUIRED_FIELDS = ("id", "completed", "name", "email", "action", "slot", "title", "coauthors", "onsite", "poster", "gallery")
 
 
-def canonical_author(raw: str) -> str:
-    """著者名の比較用正規化。
-
-    例: '山田 太郎' と '山田　太郎' を同じとして扱う。
-    ただし同姓同名は機械的に区別できない。実運用では著者IDの使用を推奨。
-    CSVに著者IDを入れる場合も、区切り文字は半角セミコロン ; とする。
-    """
-    normalized = unicodedata.normalize("NFKC", raw).casefold()
-    return re.sub(r"\s+", "", normalized)
+def norm(value: object) -> str:
+    """日本語質問の空白・全半角の揺れを吸収。日付・値は加工しない。"""
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", str(value or "")).casefold())
 
 
-def split_authors(value: str) -> list[str]:
-    """著者欄（例: '山田太郎;佐藤花子'）をリストに変換する。"""
-    # 全角セミコロンも許可。カンマ区切りは外国人名と混同するため非推奨。
-    authors = [x.strip() for x in value.replace("；", ";").split(";")]
-    authors = [x for x in authors if x]
-    if not authors:
-        raise ValueError("著者が空欄の申込は抽選に含められません")
-    # 同一申込内の重複著者名は1人として扱う。
-    return list(dict.fromkeys(authors))
+def fmt_id(value: object) -> str:
+    """Microsoft Formsの回答IDを、全枠共通の0001形式に変換。"""
+    v = str(value or "").strip()
+    if isinstance(value, int):
+        v = str(value)
+    if isinstance(value, float) and value.is_integer():
+        v = str(int(value))  # Excelが整数IDを 12.0 として返す場合にも対応
+    if not re.fullmatch(r"[0-9]{1,4}", v) or not (1 <= int(v) <= 9999):
+        raise ValueError(f"回答IDは1〜9999の整数である必要があります: {value!r}")
+    return f"{int(v):04d}"
 
 
-def id_string(value: object) -> str:
-    """申込番号を4桁に統一する。A/B/Cの枠名は申込番号に付けない。"""
-    s = str(value).strip()
-    # Excel経由で '1.0' に変化した数字を静かに誤解釈しない。
-    if not re.fullmatch(r"[0-9]{1,4}", s):
-        raise ValueError(f"申込番号は1〜4桁の数字としてください: {value!r}")
-    number = int(s)
-    if not (1 <= number <= 9999):
-        raise ValueError(f"申込番号は0001〜9999にしてください: {value!r}")
-    if number > MAX_APPLICATION_NUMBER:
-        raise ValueError(f"申込番号 {s} は MAX_APPLICATION_NUMBER={MAX_APPLICATION_NUMBER} を超えます")
-    return f"{number:04d}"
+def clean_email(value: object) -> str:
+    v = str(value or "").strip().casefold()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", v):
+        raise ValueError(f"メールアドレスの形式を確認してください: {value!r}")
+    return v
 
 
-def load_applications() -> list[dict]:
-    """CSVを読み、全枠共通の申込番号で管理する。
+def canon_author(raw: str) -> str:
+    """同一枠共著者重複の判定キー。所属の括弧書きは取り除く。"""
+    # PDFのQ9は「氏名（所属）;氏名（所属）」なので、所属が変わっていても
+    # 同じ著者を検出できるよう末尾の括弧を取り除く。
+    s = re.sub(r"\s*[(（][^()（）]*[)）]\s*$", "", str(raw).strip())
+    return norm(s)
 
-    CSVの推奨列：application_no,slot,authors,title
-    日本語の列名「申込番号,枠,著者,タイトル」も使用可能。
 
-    注意：申込番号はフォーム受付順で通算して付けている必要がある。
-    CSV上の並び順ではなく、申込番号の大きさで『最後』を判定する。
-    """
-    if INPUT_MODE == "demo":
-        # 予行演習：0001=A、0002=B、0003=C、0004=A……とする。
-        # 各申込で架空の著者を独立に設定する（重複応募がない標準例）。
-        # A/C間の重複などを試す場合は、添付のsample_applications.csvを利用。
-        return [
-            {"application_no": f"{i:04d}",
-             "slot": SLOTS[(i - 1) % 3],
-             "authors": f"架空著者{i:04d}",
-             "title": f"動作確認用申込{i:04d}"}
-            for i in range(1, LAST_PRESENTER_ID + 1)
-        ]
+def split_author_names(primary: str, coauthor_text: str) -> set[str]:
+    values = [primary] + [x for x in re.split(r"[;；]", coauthor_text or "") if x.strip()]
+    names = {canon_author(x) for x in values}
+    if not names or "" in names:
+        raise ValueError("空の著者名があります")
+    return names
 
-    if INPUT_MODE != "csv":
-        raise ValueError("INPUT_MODE は 'demo' または 'csv' のみ指定できます")
 
-    path = CSV_PATH
-    if not path:
-        # Colabのみアップロードダイアログを開く。
+def is_yes(value: object) -> bool:
+    s = norm(value)
+    return s.startswith("はい") or s in ("yes", "true", "1")
+
+
+def procedure(value: object) -> str:
+    s = norm(value)
+    if "取消" in s or "キャンセル" in s: return "CANCEL"
+    if "修正" in s or "上書き" in s: return "UPDATE"
+    if "新規" in s: return "NEW"
+    raise ValueError(f"手続きの種類が読み取れません: {value!r}")
+
+
+def onsite_choice(value: object) -> str:
+    """Q13の3択。'はい'だけでなく国語研内・委員の扱いを保持する。"""
+    s = norm(value)
+    if s.startswith("いいえ") or s in ("no", "false", "0"):
+        return "NO"
+    if not s.startswith("はい"):
+        raise ValueError(f"現地配信の回答が読み取れません: {value!r}")
+    # Q13: 「はい（国語研内に居室がある or 運営委員である）」を定員外に。
+    # 「居室がない and 運営委員でない」は定員内。単純な「居室」部分一致は危険。
+    if "居室がある" in s or "運営委員である" in s or "実行委員である" in s:
+        return "OUTSIDE_CAPACITY"
+    if "居室がない" in s or "運営委員でない" in s or "実行委員でない" in s:
+        return "SEAT_REQUEST"
+    raise ValueError(f"現地配信の3択が判別できません。正規化列を確認: {value!r}")
+
+
+def parse_time(value: object, timezone: str = FORM_EXPORT_TIMEZONE) -> datetime:
+    """Forms Excelの時刻はタイムゾーンが明示されない場合がある。必ず設定で指定。"""
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date):
+        dt = datetime(value.year, value.month, value.day)
+    else:
+        s = str(value or "").strip()
+        if not s:
+            raise ValueError("完了時刻が空です。締切判定ができません")
+        s = s.replace("年", "-").replace("月", "-").replace("日", " ").replace("Z", "+00:00")
         try:
-            from google.colab import files
-        except ImportError as exc:
-            raise RuntimeError("MacでCSVを使う場合はCSV_PATHにファイルパスを設定してください") from exc
-        print("応募一覧CSVをアップロードしてください（個人情報を含むため、共有ノートブックに保存しないでください）。")
-        uploaded = files.upload()
-        if len(uploaded) != 1:
-            raise ValueError("CSVは1ファイルだけアップロードしてください")
-        path = next(iter(uploaded))
+            dt = datetime.fromisoformat(s)
+        except ValueError:
+            parsed = None
+            for fmt in ("%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %I:%M:%S %p"):
+                try:
+                    parsed = datetime.strptime(s, fmt)
+                    break
+                except ValueError:
+                    continue
+            if parsed is None:
+                raise ValueError(f"完了時刻の形式に対応していません: {value!r}")
+            dt = parsed
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(timezone))
+    return dt.astimezone(JST)
 
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        if not reader.fieldnames:
-            raise ValueError("CSVにヘッダー行がありません")
-        aliases = {
-            "application_no": ("application_no", "application_id", "申込番号", "受付番号"),
-            "slot": ("slot", "枠", "コアタイム"),
-            "authors": ("authors", "著者", "共著者を含む著者", "author_ids"),
-            "title": ("title", "タイトル", "発表題目"),
-        }
-        names = {}
-        for key, options in aliases.items():
-            names[key] = next((n for n in options if n in reader.fieldnames), None)
-            if key in ("application_no", "slot", "authors") and names[key] is None:
-                raise ValueError(f"CSVに必要な列 {key} がありません。列名例: {options}")
-        records = []
-        for line_no, row in enumerate(reader, start=2):
-            if not any(str(v or "").strip() for v in row.values()):
-                continue
-            r = {k: str(row.get(col, "") or "").strip() if col else "" for k, col in names.items()}
-            try:
-                r["application_no"] = id_string(r["application_no"])
-                r["slot"] = r["slot"].upper()
-                if r["slot"] not in SLOTS:
-                    raise ValueError("枠はA/B/Cのいずれかにしてください")
-                split_authors(r["authors"])
-            except ValueError as exc:
-                raise ValueError(f"CSV {line_no} 行目: {exc}") from exc
-            records.append(r)
+
+def match_columns(columns: list[str]) -> dict[str, str | None]:
+    """Microsoft Forms Excelの実際の質問タイトルから列を選ぶ。"""
+    result: dict[str, str | None] = {}
+    for field, patterns in FIELD_PATTERNS.items():
+        candidates = [c for c in columns if any(
+            (norm(c) == norm(p)) if field == "id" else (norm(p) in norm(c))
+            for p in patterns)]
+        if len(candidates) > 1:
+            # 長文の「発表者全員が...」で誤った列に重複一致すると危険。
+            raise ValueError(f"列 {field} が複数あります。質問名を整理してください: {candidates}")
+        result[field] = candidates[0] if candidates else None
+    missing = [f for f in REQUIRED_FIELDS if result[f] is None]
+    if missing:
+        raise ValueError(f"Microsoft Forms出力の列が見つかりません: {missing}\n実際の列名: {columns}")
+    return result
+
+
+def read_forms_export(path: Path, timezone: str = FORM_EXPORT_TIMEZONE) -> list[dict]:
+    """Microsoft Formsの回答を「一行一回答」に保って読む。欠番は補わない。"""
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        try:
+            import openpyxl
+        except ImportError as ex:
+            raise RuntimeError("Excelを読むために pip install openpyxl が必要です") from ex
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            ws = wb.active
+            data = ws.iter_rows(values_only=True)
+            columns = [str(x or "").strip() for x in next(data)]
+            source = (dict(zip(columns, values)) for values in data)
+            records = _parse_rows(source, columns, timezone)
+        finally:
+            wb.close()
         return records
+    if suffix == ".csv":
+        # ExcelでCSVへ変換するときは文字コードUTF-8を使う。
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            return _parse_rows(reader, reader.fieldnames or [], timezone)
+    raise ValueError("入力ファイルはMicrosoft Forms回答の .xlsx または .csv にしてください")
 
 
-def validate_applications(records: list[dict]) -> None:
-    """受付番号・枠・著者欄を検査する。勝手に番号を再採番しない。
-
-    LAST_PRESENTER_ID は締切時点の最終受付IDを指定する。CSVにそれより
-    大きい番号があれば黙って無視せず、設定の間違いとして停止する。
-    多重Reject・試験登録についても、元の受付番号を消さずに記録を残す。
-    """
-    if not isinstance(MAX_APPLICATION_NUMBER, int) or not (1 <= MAX_APPLICATION_NUMBER <= 9999):
-        raise ValueError("MAX_APPLICATION_NUMBER は1〜9999の整数にしてください")
-    if not isinstance(LAST_PRESENTER_ID, int) or not (1 <= LAST_PRESENTER_ID <= MAX_APPLICATION_NUMBER):
-        raise ValueError("LAST_PRESENTER_ID は1〜MAX_APPLICATION_NUMBERの整数にしてください")
-    if not isinstance(BOOTH_CAPACITY, int) or not (1 <= BOOTH_CAPACITY <= 36):
-        raise ValueError("BOOTH_CAPACITY は1〜36にしてください")
+def _parse_rows(source, columns: list[str], timezone: str) -> list[dict]:
+    fields = match_columns(columns)
+    records = []
+    for row_number, row in enumerate(source, 2):
+        if not any(str(x or "").strip() for x in row.values()):
+            continue
+        try:
+            val = {field: row.get(column, "") if column else "" for field, column in fields.items()}
+            aid = fmt_id(val["id"])
+            act = procedure(val["action"])
+            d = {
+                "id": aid, "no": int(aid), "completed": parse_time(val["completed"], timezone),
+                "name": str(val["name"] or "").strip(),
+                "email": clean_email(val["email"]), "action": act,
+                "old_id": "", "slot": "", "title": "", "summary": "",
+                "affiliation": "", "coauthors": "", "author_keys": set(),
+                "poster_requested": False, "gallery_allowed": False, "onsite": "NO",
+                "online_requested": False, "future_organizer": False,
+                "upload_reference": "", "status": "UNPROCESSED", "reason": "",
+                "booth_rank": "", "booth_hash": "", "booth_result": "",
+                "poster_rank": "", "poster_hash": "", "poster_result": "",
+                "onsite_result": "",
+            }
+            if not d["name"]:
+                raise ValueError("氏名が空です")
+            if act in ("UPDATE", "CANCEL"):
+                old = val["old_modify"] if act == "UPDATE" else val["old_cancel"]
+                if old is None or not str(old).strip():
+                    raise ValueError("修正・取消には以前の受付番号が必要です")
+                d["old_id"] = fmt_id(old)
+            if act != "CANCEL":
+                slot = norm(val["slot"]).upper()
+                if slot not in SLOTS:
+                    # Microsoft Formsの選択肢例「A 未完成研究...」から冒頭1文字を取る。
+                    slot = str(val["slot"] or "").strip().upper()[:1]
+                if slot not in SLOTS:
+                    raise ValueError(f"コアタイムはA/B/Cにしてください: {val['slot']!r}")
+                d["slot"] = slot
+                d["title"] = str(val["title"] or "").strip()
+                d["summary"] = str(val["summary"] or "").strip()
+                d["affiliation"] = str(val["affiliation"] or "").strip()
+                d["coauthors"] = str(val["coauthors"] or "").strip()
+                d["author_keys"] = split_author_names(d["name"], d["coauthors"])
+                d["poster_requested"] = is_yes(val["poster"])
+                d["gallery_allowed"] = is_yes(val["gallery"])
+                d["onsite"] = onsite_choice(val["onsite"])
+                d["online_requested"] = is_yes(val["online"])
+                d["future_organizer"] = is_yes(val["organizer"])
+                d["upload_reference"] = str(val["upload"] or "")
+                if not d["title"]:
+                    raise ValueError("発表題目が空です")
+                # 同意事項はFormsの必須回答で保証されるが、念のため再検査する。
+                for req in ("consent", "anti", "privacy"):
+                    if fields[req] is not None and not is_yes(val[req]):
+                        raise ValueError(f"同意事項 {req} が『はい』ではありません")
+            records.append(d)
+        except ValueError as exc:
+            raise ValueError(f"Excel/CSV {row_number} 行目: {exc}") from exc
     if not records:
-        raise ValueError("申込が0件です")
-    ids = [id_string(r["application_no"]) for r in records]
-    repeats = [item for item, n in Counter(ids).items() if n > 1]
-    if repeats:
-        raise ValueError(f"申込番号の重複があります（A/B/C通算なので不可）: {repeats[:10]}")
+        raise ValueError("Excelに申込回答がありません")
+    seen = set()
     for r in records:
-        r["application_no"] = id_string(r["application_no"])
-        if int(r["application_no"]) > LAST_PRESENTER_ID:
-            raise ValueError(f"受付番号{r['application_no']}はLAST_PRESENTER_ID={LAST_PRESENTER_ID}を超えます")
-        r["slot"] = r["slot"].upper()
-        if r["slot"] not in SLOTS:
-            raise ValueError(f"不正な枠: {r['slot']}")
-        r["authors_list"] = split_authors(r["authors"])
-        r["author_keys"] = {canonical_author(a) for a in r["authors_list"]}
-        if "" in r["author_keys"]:
-            raise ValueError(f"空の著者ID: {r['application_no']}")
+        if r["id"] in seen:
+            raise ValueError(f"フォーム回答IDが重複しています: {r['id']}")
+        seen.add(r["id"])
+    return sorted(records, key=lambda r: r["no"])
 
 
-def configured_lists(records: list[dict]) -> dict[str, set[str]]:
-    """手動入力の3種類の番号リストを正規化・検証する。
-
-    ミスを見逃すと公開抽選の対象者が変わるため、未存在IDや二重指定は
-    許容しない。入力が不正なら株価を取りに行く前に中止する。
-    """
+def manual_sets(records: list[dict], last_id: int) -> dict[str, set[str]]:
+    """手動番号リストを検査。誤指定・重複は無言で無視せず停止。"""
     sources = {
-        "multiple_reject": MULTIPLE_APPLICATION_REJECT_IDS,
-        "coauthor_manual_gallery": COAUTHOR_GALLERY_MOVE_IDS,
-        "test_reject": TEST_REGISTRATION_REJECT_IDS,
+        "multiple": MULTIPLE_APPLICATION_REJECT_IDS,
+        "coauthor": COAUTHOR_GALLERY_MOVE_IDS,
+        "test": TEST_REGISTRATION_REJECT_IDS,
     }
-    present = {r["application_no"] for r in records}
-    groups: dict[str, set[str]] = {}
-    seen: dict[str, str] = {}
-    for name, raw in sources.items():
-        if not isinstance(raw, (list, tuple, set)):
-            raise ValueError(f"{name} はリスト形式で指定してください")
-        group: set[str] = set()
-        for item in raw:
-            aid = id_string(item)
-            if int(aid) > LAST_PRESENTER_ID:
-                raise ValueError(f"{name} の {aid} は最終受付番号を超えています")
-            if aid not in present:
-                raise ValueError(f"{name} の {aid} は申込CSVに存在しません")
-            if aid in group:
-                raise ValueError(f"{name} で申込番号 {aid} が二重指定されています")
-            if aid in seen:
-                raise ValueError(f"{aid} は {seen[aid]} と {name} の両方に含まれます")
+    ids = {r["id"] for r in records}
+    result = {}
+    used = {}
+    for key, raw in sources.items():
+        group = set()
+        for value in raw:
+            aid = fmt_id(value)
+            if aid not in ids or int(aid) > last_id:
+                raise ValueError(f"{key}に存在しない／最後の受付を超えるIDがあります: {aid}")
+            if aid in used or aid in group:
+                raise ValueError(f"手動リストに重複したIDがあります: {aid}")
             group.add(aid)
-            seen[aid] = name
-        groups[name] = group
-    return groups
+            used[aid] = key
+        result[key] = group
+    return result
 
 
-def determine_validity(records: list[dict]) -> dict[str, object]:
-    """Reject・ギャラリー移動・ブース抽選候補を区分する。
-
-    順序の意味:
-      ① 試験登録・多重Rejectを抽選母集団から除く。
-      ② Reject以外の同一枠の著者を調べ、各著者について最後の受付番号を記録。
-         後続応募と一人でも著者が重なる先の応募はギャラリーへ。
-      ③ 事務局の「共著申込ブース移動」リストにある応募もギャラリーへ。
-      ④ 残った応募だけをハッシュ抽選に入れる。
-
-    ギャラリーへ移した申込はReject扱いにしない。抽選で定員を超えた
-    申込も同様にギャラリー対象となる。辞退後の繰上げ採択は行わない。
-    """
-    manual = configured_lists(records)
-    no_lottery = manual["multiple_reject"] | manual["test_reject"]
-    latest_by_slot_author: dict[tuple[str, str], str] = {}
+def classify_submissions(records: list[dict]) -> dict:
+    """まず履歴を確定。共著者重複は履歴修正・取消の処理後に判定する。"""
+    if not 1 <= MAX_APPLICATION_NUMBER <= 9999:
+        raise ValueError("MAX_APPLICATION_NUMBERは1〜9999にしてください")
+    max_seen = max(r["no"] for r in records)
+    if max_seen > MAX_APPLICATION_NUMBER:
+        raise ValueError(f"最大ID={max_seen}はMAX_APPLICATION_NUMBERを超えます")
+    if LAST_PRESENTER_ID and max_seen != LAST_PRESENTER_ID:
+        raise ValueError(f"フォーム出力の最大回答ID {max_seen} と LAST_PRESENTER_ID {LAST_PRESENTER_ID} が一致しません")
+    last = LAST_PRESENTER_ID or max_seen
+    groups = manual_sets(records, last)
+    by_id = {r["id"]: r for r in records}
+    cutoff = datetime.fromisoformat(DEADLINE_JST).replace(tzinfo=JST)
+    # Microsoft Formsの回答IDが本当に受付順で増加しているかを、完了時刻で照合。
+    # 反対順があれば「最後の応募」を誤判定する危険があるため本番処理を止める。
+    for previous, current in zip(records, records[1:]):
+        if current["completed"] < previous["completed"]:
+            raise ValueError(
+                f"回答IDと完了時刻の順序が逆転しています: {previous['id']}→{current['id']}。"
+                "Formsの回答IDの付与順序を事務局で確認してください"
+            )
     for r in records:
-        aid = r["application_no"]
-        if aid in no_lottery:
-            continue  # Rejectや試験登録の共著者は、正式応募の判定を妨げない
-        for author in r["author_keys"]:
-            key = (r["slot"], author)
-            if key not in latest_by_slot_author or int(aid) > int(latest_by_slot_author[key]):
-                latest_by_slot_author[key] = aid
-
-    for r in records:
-        aid = r["application_no"]
-        r["last_conflicting_ids"] = sorted({
-            latest_by_slot_author[(r["slot"], author)]
-            for author in r["author_keys"]
-            if (r["slot"], author) in latest_by_slot_author
-            and int(latest_by_slot_author[(r["slot"], author)]) > int(aid)
-        })
-        if aid in manual["test_reject"]:
-            r["status"] = "REJECT_TEST"
-            reason = "試験用登録（抽選・ギャラリーとも対象外）"
-        elif aid in manual["multiple_reject"]:
-            r["status"] = "REJECT_MULTIPLE"
-            reason = "多重申込によるReject（事務局確認済み）"
-        elif aid in manual["coauthor_manual_gallery"]:
-            r["status"] = "GALLERY_MANUAL"
-            reason = "共著申込により事務局指定でフェス・ギャラリーへ移動"
-            if r["last_conflicting_ids"]:
-                reason += "; 後続受付 " + ",".join(r["last_conflicting_ids"])
-        elif r["last_conflicting_ids"]:
-            r["status"] = "GALLERY_COAUTHOR"
-            reason = "同一枠の共著者重複：後続受付 " + ",".join(r["last_conflicting_ids"])
+        aid = r["id"]
+        if aid in groups["test"]:
+            r.update(status="REJECT_TEST", reason="試験登録。公開しない")
+            continue
+        if aid in groups["multiple"]:
+            r.update(status="REJECT_MULTIPLE", reason="事務局による多重申込Reject")
+            continue
+        if r["completed"] >= cutoff:
+            r.update(status="REJECT_LATE", reason="日本時間2027-02-01 12:00の締切後")
+            continue
+        if r["action"] == "NEW":
+            r.update(status="ACTIVE", reason="新規")
+            continue
+        # 修正・取消の承認は、回答IDと申込メール・氏名の両方を照合する。
+        old = by_id.get(r["old_id"])
+        if not old or old["no"] >= r["no"]:
+            raise ValueError(f"{aid}: 以前の受付番号 {r['old_id']} が見つからない／番号順が不正")
+        if old["status"] != "ACTIVE":
+            raise ValueError(f"{aid}: 以前の受付番号 {r['old_id']} は現在有効ではありません ({old['status']})。確認してください")
+        if old["email"] != r["email"] or norm(old["name"]) != norm(r["name"]):
+            raise ValueError(f"{aid}: 旧番号 {r['old_id']} と氏名・メールアドレスが一致しません。手動照合が必要です")
+        if r["action"] == "UPDATE":
+            old.update(status="SUPERSEDED", reason=f"修正回答{aid}に置換。ギャラリー対象外")
+            r.update(status="ACTIVE", reason=f"修正・旧番号{r['old_id']}")
+        elif r["action"] == "CANCEL":
+            old.update(status="CANCELLED", reason=f"取消回答{aid}を照合済。ギャラリー対象外")
+            r.update(status="CANCEL_REQUEST", reason=f"旧番号{r['old_id']}を取消")
         else:
-            r["status"] = "LOTTERY"
-            reason = "ブース抽選対象"
-        r["reason"] = reason
-        # 既存版のmake_rankingが使っているvalidも更新して互換性を維持する。
-        r["valid"] = r["status"] == "LOTTERY"
-        r["invalid_reason"] = "" if r["valid"] else reason
-    return {"manual": manual, "latest_by_slot_author": latest_by_slot_author}
+            raise AssertionError(r["action"])
+    # ACTIVE以外の回答（試験、Reject、履歴取消）は著者重複判定の対象外。
+    latest = {}
+    for r in records:
+        if r["status"] == "ACTIVE":
+            for key in r["author_keys"]:
+                latest[(r["slot"], key)] = r["id"]
+    for r in records:
+        if r["status"] != "ACTIVE":
+            continue
+        later = sorted({latest[(r["slot"], author)] for author in r["author_keys"]
+                        if latest[(r["slot"], author)] != r["id"]})
+        if later:
+            r.update(status="GALLERY_COAUTHOR", reason="同じ枠で共著者重複。後の申込="+",".join(later))
+        elif r["id"] in groups["coauthor"]:
+            r.update(status="GALLERY_MANUAL", reason="事務局指定の共著重複ギャラリー移動")
+    for aid in groups["coauthor"]:
+        if by_id[aid]["status"] not in ("GALLERY_COAUTHOR", "GALLERY_MANUAL"):
+            raise ValueError(f"共著ギャラリー指定ID {aid} は修正・取消・Reject等です。手動リストを確認してください")
+    return {"last_id": last, "latest_by_slot_author": latest,
+            "manual_lists": {k: sorted(v) for k, v in groups.items()}}
 
 
-def obtain_nikkei_close() -> tuple[str, str, str]:
-    """Yahoo Financeの日経平均 (^N225) の日足から終値を自動取得。
+def hash_item(parts: list[str]) -> tuple[str, str]:
+    text = "|".join(parts)
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    返り値: (日付 YYYY-MM-DD, 価格 xx.xx, 種別 PREVIEW/FINAL)
 
-    【重要】決済の確定前の値や未来の値を採用しない。
-    取引日16:00までは前営業日を含む直近の確定終値を採用する。
-    土日・祝日は直前の取引日の終値を使う。
-    FINALの場合は必ず2027-02-02の終値を要求し、値がなければ停止。
+def price_string(value: object) -> str:
+    """終値はカンマなし小数2桁で固定。float誤差をDecimalで丸める。"""
+    try:
+        raw = Decimal(str(value).replace(",", ""))
+        if not raw.is_finite() or raw <= 0:
+            raise ValueError("日経平均終値は正の有限数にしてください")
+        return str(raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except InvalidOperation as exc:
+        raise ValueError(f"終値の形式が不正です: {value!r}") from exc
 
-    使用するサービスはYahoo Financeの非公式データAPIなので、
-    正式抽選前に公表元の終値と照合し、採用した値を確定・保存する。
-    """
+
+def obtain_nikkei_close(mode: str, now: datetime | None = None,
+                        override: str | None = None) -> tuple[str, str, str]:
+    """既知の終値で『本番』にならないよう、日付と時刻を検査する。"""
+    now = (now or datetime.now(JST)).astimezone(JST)
+    final_ready = datetime.fromisoformat(DRAW_DATE+"T16:00:00").replace(tzinfo=JST)
+    if mode not in ("auto", "preview", "final"):
+        raise ValueError("MODEはauto/preview/finalのいずれかです")
+    phase = "FINAL" if mode == "final" or (mode == "auto" and now >= final_ready) else "PREVIEW"
+    if phase == "FINAL" and now < final_ready:
+        raise ValueError("本番用の終値は2027-02-01 16:00 JSTより前には使用できません")
+    if override:
+        # 手入力は検算用。自動での本番認定には使わず、PREVIEW表示を維持。
+        if phase == "FINAL":
+            raise ValueError("手入力終値で本番扱いにはできません。自動取得値を公式値と照合してください")
+        return "手入力（予行演習）", price_string(override), "PREVIEW"
     try:
         import yfinance as yf
     except ImportError as exc:
-        raise RuntimeError("yfinance がありません。Colabでは '%pip install yfinance' を実行してください") from exc
-
-    now = datetime.now(TIMEZONE)
-    today = now.date()
-    official_date = date.fromisoformat(FINAL_PRICE_DATE)
-    ready_today = now.time() >= time(CLOSE_READY_HOUR, 0)
-    final_allowed = today > official_date or (today == official_date and ready_today)
-
-    if MODE not in ("auto", "preview", "final"):
-        raise ValueError("MODE は auto / preview / final のいずれか")
-    if MODE == "final" and not final_allowed:
-        raise RuntimeError(f"本番抽選は{FINAL_PRICE_DATE}の終値公表後に実行してください（日本時間16:00以降）")
-
-    require_official = MODE == "final" or (MODE == "auto" and final_allowed)
-    if require_official:
-        reference_date = official_date
-    else:
-        reference_date = today if ready_today else today - timedelta(days=1)
-
-    # yfinance.endは排他的なので対象日の翌日を指定する。
-    # 20日程度取得しておけば休日が連続しても直近の取引日を取得できる。
-    start = reference_date - timedelta(days=20)
-    end = reference_date + timedelta(days=1)
-    print(f"日経平均の終値を取得しています: ^N225  {start} 〜 {reference_date}")
-    df = yf.download(
-        "^N225", start=start.isoformat(), end=end.isoformat(),
-        interval="1d", auto_adjust=False, progress=False,
-        threads=False, multi_level_index=False, timeout=20,
-    )
-    if df is None or df.empty:
-        raise RuntimeError("株価データを取得できませんでした。ネットワーク接続またはYahoo Financeの応答を確認してください")
-
-    # 古い版のyfinanceがMultiIndexを返す場合の互換処理。
-    close_col = df["Close"]
-    if getattr(close_col, "ndim", 1) > 1:
-        close_col = close_col.iloc[:, 0]
-    candidates = []
-    for timestamp, raw_value in close_col.items():
-        d = timestamp.date() if hasattr(timestamp, "date") else date.fromisoformat(str(timestamp)[:10])
-        if d > reference_date:
-            continue
-        try:
-            v = float(raw_value)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(v) or v <= 0:
-            continue
-        candidates.append((d, v))
-    if not candidates:
-        raise RuntimeError("対象期間の有効な日経平均終値がありません")
-
-    price_date, value = max(candidates, key=lambda pair: pair[0])
-    if not require_official and price_date != reference_date:
-        print(f"[注意] {reference_date} の終値が取得できないため、直近の確定値 {price_date} を使います。休場日や配信遅延の可能性があります。")
-    if require_official and price_date != official_date:
-        raise RuntimeError(
-            f"本番日 {official_date} の終値をまだ取得できません。"
-            f"取得済みの最新日付は {price_date} です。後で再実行してください。"
-        )
-
-    # 株価の小数点以下2桁を文字列として固定。
-    # この文字列が少しでも変わると全員のハッシュ値が変わるので必ず記録する。
-    price = format(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), ".2f")
-    return price_date.isoformat(), price, "FINAL" if require_official else "PREVIEW"
-
-
-def sha256_for(slot: str, close_price: str, application_no: str) -> tuple[str, str]:
-    """指定の厳密な入力規則でハッシュ値を作る。
-
-    UTF-8入力: 'lingfes2027|A|58123.45|0001'
-    戻り値: (元文字列, 64桁16進数ハッシュ)
-    ※ 株価の日付はハッシュ文字列には含めない（別途結果ファイルに記録）。
-    """
-    source = f"{HASH_PREFIX}|{slot}|{close_price}|{application_no}"
-    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
-    return source, digest
-
-
-def make_ranking(records: list[dict], price_date: str, close_price: str, phase: str) -> list[dict]:
-    """A/B/Cで独立にSHA-256を昇順で並べる。"""
-    out = []
-    for slot in SLOTS:
-        members = [r for r in records if r["slot"] == slot and r["valid"]]
-        for r in members:
-            r["hash_input"], r["sha256"] = sha256_for(slot, close_price, r["application_no"])
-        # 64桁の16進数は辞書順＝数値の大小順になる。完全一致時は申込番号昇順。
-        members.sort(key=lambda r: (r["sha256"], r["application_no"]))
-        for i, r in enumerate(members, start=1):
-            out.append({
-                "phase": phase, "price_date": price_date, "nikkei_close": close_price,
-                "slot": slot, "application_no": r["application_no"],
-                "rank": i, "result": "ブース割当候補" if i <= BOOTH_CAPACITY else "フェス・ギャラリー対象（定員超過）",
-                "sha256": r["sha256"], "hash_input": r["hash_input"],
-                "authors": r["authors"], "title": r.get("title", ""),
-            })
-    return out
-
-
-def write_csv(path: Path, rows: list[dict], columns: list[str]) -> None:
-    # utf-8-sig (BOM付き) はExcelで日本語が文字化けしにくい。
-    with path.open("w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rows)
-
-
-def _review_row(r: dict) -> dict:
-    """内部台帳を作る。内部台帳には著者名・題目が入るので公開厳禁。"""
-    return {
-        "application_no": r["application_no"],
-        "slot": r["slot"],
-        "status": r["status"],
-        "reason": r["reason"],
-        "last_conflicting_ids": ";".join(r.get("last_conflicting_ids", [])),
-        "authors": r["authors"], "title": r.get("title", ""),
-    }
-
-
-def make_public_html(records: list[dict], ranked: list[dict],
-                     price_date: str, price: str, phase: str) -> str:
-    """結果の公開用HTMLを生成。外部CSSやJavaScriptは一切必要ない。
-
-    タイトル・著者名は原則出さない。入力フォームの個人情報も出さない。
-    重複申込のRejectと、共著者重複でギャラリーへ移した応募は別節にする。
-    試験登録者は公開する必要がないため、件数のみ（番号は非公開）。
-    """
-    from html import escape
-    def esc(x: object) -> str:
-        return escape(str(x), quote=True)
-    def table(items: list[dict], columns: list[tuple[str, str]]) -> str:
-        head = "".join(f"<th scope='col'>{esc(label)}</th>" for _, label in columns)
-        if not items:
-            return "<p>該当なし</p>"
-        body = "".join(
-            "<tr>" + "".join(f"<td>{esc(r.get(key,''))}</td>" for key, _ in columns) + "</tr>"
-            for r in items
-        )
-        return f"<div class='scroll'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>"
-
-    def public_row(r: dict) -> dict:
-        return {"application_no": r["application_no"], "slot": r["slot"],
-                "title": r.get("title", "") if PUBLIC_INCLUDE_TITLES else ""}
-
-    def public_rank(r: dict) -> dict:
-        return {"application_no": r["application_no"], "slot": r["slot"],
-                "rank": r["rank"], "sha256": r["sha256"],
-                "title": r.get("title", "") if PUBLIC_INCLUDE_TITLES else ""}
-
-    cols = [("slot", "枠"), ("application_no", "申込番号")]
-    if PUBLIC_INCLUDE_TITLES:
-        cols.append(("title", "題目"))
-    rejects = [public_row(r) for r in records if r["status"] == "REJECT_MULTIPLE"]
-    coauthors = [public_row(r) for r in records if r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL")]
-    booths = [public_rank(r) for r in ranked if r["result"] == "ブース割当候補"]
-    overflow = [public_rank(r) for r in ranked if r["result"] != "ブース割当候補"]
-    rcols = [("slot", "枠"), ("application_no", "申込番号"), ("rank", "抽選順位")]
-    if PUBLIC_INCLUDE_TITLES:
-        rcols.append(("title", "題目"))
-    preview = phase != "FINAL" or INPUT_MODE != "csv"
-    notice = ("これは予行演習の出力です。正式な採否として公開しないでください。"
-              if preview else "本番用の計算結果です。公表前に日経平均の公式終値と受付原簿を照合してください。")
-    summary = " / ".join(
-        f"{slot}枠: 抽選対象{sum(r['slot']==slot and r['status']=='LOTTERY' for r in records)}件"
-        for slot in SLOTS
-    )
-    return f"""<!doctype html>
-<html lang='ja'><head><meta charset='utf-8'>
-<meta name='viewport' content='width=device-width, initial-scale=1'>
-{'<meta name="robots" content="noindex,nofollow">' if preview else ''}
-<title>言語学フェス2027 ブース抽選結果</title>
-<style>
-:root{{--bg:#f6f8fb;--text:#172b41;--line:#ccd8e3;--navy:#17435b}}
-*{{box-sizing:border-box}} body{{font-family:system-ui,'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;background:var(--bg);color:var(--text);line-height:1.7;margin:0}}
-main{{max-width:980px;margin:auto;padding:28px 22px 70px}}
-h1{{font-size:1.8rem}}h2{{border-bottom:2px solid var(--line);padding-bottom:7px;margin-top:38px;font-size:1.25rem}}
-.notice{{padding:15px;background:#fff0db;border-left:4px solid #b57c22;font-weight:700}}
-.small{{color:#4a6275;font-size:.9rem}}.scroll{{max-width:100%;overflow:auto}}
-table{{border-collapse:collapse;width:100%;background:white;margin-top:10px}}
-th,td{{border-bottom:1px solid var(--line);text-align:left;padding:7px 10px}}
-th{{background:#e7eef5;color:var(--navy)}}
-</style></head><body><main>
-<h1>言語学フェス2027 ブース抽選結果</h1>
-<p class='notice'>{esc(notice)}</p>
-<p>使用した日経平均終値：<strong>{esc(price_date)} / {esc(price)}円</strong>。
-抽選順位は <code>lingfes2027|枠|終値|4桁受付番号</code> のSHA-256を昇順に並べたものです。</p>
-<p class='small'>最終受付番号：{esc(f'{LAST_PRESENTER_ID:04d}')} / {esc(summary)}</p>
-<h2>ブース割当候補（各枠最大{esc(BOOTH_CAPACITY)}件）</h2>
-{table(booths, rcols)}
-<h2>定員超過によるフェス・ギャラリー対象</h2>
-<p class='small'>抽選37位以降の発表は、資料の公開に同意した場合にフェス・ギャラリーへ掲載します。採択後に辞退が生じても、繰上げ採択は行いません。</p>
-{table(overflow, rcols)}
-<h2>共著申込によるフェス・ギャラリー移動</h2>
-<p class='small'>同一枠内で共著者が重複するため、最後の申込のみブース抽選に残しました。
-下記の発表はRejectではなく、資料の公開に同意した場合にフェス・ギャラリーへ掲載する対象です。</p>
-{table(coauthors, cols)}
-<h2>多重申込によるReject一覧</h2>
-<p class='small'>事務局が多重申込として確認し、抽選およびギャラリーへの掲載対象から除外した番号です。</p>
-{table(rejects, cols)}
-<p class='small'>別途、試験登録 {sum(r['status']=='REJECT_TEST' for r in records)} 件を抽選対象から除外しました。試験用の申込番号は公開していません。</p>
-</main></body></html>"""
-
-
-def main() -> None:
-    """全受付の分類→株価取得→ハッシュ順位→内部・公開用出力。"""
-    print("=" * 74)
-    print("言語学フェス2027 ブース抽選・重複ギャラリー移動・多重Reject")
-    print("=" * 74)
-    print(f"入力モード: {INPUT_MODE} / 株価モード: {MODE}")
-    print(f"受付番号の上限: {MAX_APPLICATION_NUMBER:04d} / 最終受付ID: {LAST_PRESENTER_ID:04d}")
-    if INPUT_MODE == "demo":
-        print("[予行演習] 架空の登録者を作るモードです。抽選結果として公開できません")
-
-    records = load_applications()
-    validate_applications(records)
-    details = determine_validity(records)
-    records.sort(key=lambda r: int(r["application_no"]))
-    counts = Counter(r["status"] for r in records)
-    print(f"受付: {len(records)}件 / ブース抽選対象: {counts['LOTTERY']}件")
-    print(f"多重Reject: {counts['REJECT_MULTIPLE']}件 / 試験Reject: {counts['REJECT_TEST']}件")
-    print(f"共著重複ギャラリー移動: {counts['GALLERY_COAUTHOR'] + counts['GALLERY_MANUAL']}件")
-    print("※ ギャラリー移動者はRejectではなく、発表資料を掲載する対象です")
-
-    # 先に受付条件を検証してから、日経平均の終値を取得する。
-    price_date, price, phase = obtain_nikkei_close()
-    print(f"使用日経平均終値: {price_date} / {price}円 ({phase})")
+        raise RuntimeError("株価取得には pip install yfinance が必要です") from exc
+    start = (now.date() - timedelta(days=24)).isoformat()
+    end = (now.date() + timedelta(days=2)).isoformat()
     if phase == "FINAL":
-        print("[要照合] Yahoo Finance取得値を公式の終値と照合してください")
-    else:
-        print("[予行演習] この出力を正式結果として公開しないでください")
+        start = (date.fromisoformat(DRAW_DATE)-timedelta(days=5)).isoformat()
+        end = (date.fromisoformat(DRAW_DATE)+timedelta(days=2)).isoformat()
+    df = yf.download("^N225", start=start, end=end, interval="1d",
+                     progress=False, auto_adjust=False, threads=False)
+    if df is None or df.empty:
+        raise RuntimeError("Yahoo Financeの日経平均(^N225)を取得できませんでした")
+    close_col = df["Close"]
+    # yfinanceの版によってClose列がDataFrame（MultiIndex）になる。
+    if hasattr(close_col, "columns"):
+        close_col = close_col.iloc[:, 0]
+    prices = []
+    for idx, val in close_col.dropna().items():
+        d = idx.date() if hasattr(idx, "date") else date.fromisoformat(str(idx)[:10])
+        if phase == "FINAL":
+            if d == date.fromisoformat(DRAW_DATE):
+                prices.append((d.isoformat(), price_string(val)))
+        elif d <= now.date() and not (d == now.date() and now.hour < CLOSE_READY_HOUR_JST):
+            prices.append((d.isoformat(), price_string(val)))
+    if not prices:
+        raise RuntimeError((f"指定日{DRAW_DATE}の終値が配信されていません。本番を中止します"
+                            if phase == "FINAL" else "利用可能な確定終値がまだありません"))
+    d, p = max(prices)
+    return d, p, phase
 
-    ranked = make_ranking(records, price_date, price, phase)
-    print("順位: SHA-256 64桁16進文字列の昇順（A/B/Cごと）")
+
+def assign_booths(records: list[dict], price: str) -> dict[str, list[dict]]:
+    """抽選対象のみを各枠でSHA-256昇順。辞退があっても繰上げはしない。"""
+    groups = {}
     for slot in SLOTS:
-        in_slot = [r for r in ranked if r["slot"] == slot]
-        print(f"  {slot}枠: 抽選対象{len(in_slot)} / ブース{min(len(in_slot), BOOTH_CAPACITY)} / 定員超過ギャラリー対象{max(0, len(in_slot)-BOOTH_CAPACITY)}")
+        candidates = [r for r in records if r["status"] == "ACTIVE" and r["slot"] == slot]
+        for r in candidates:
+            r["booth_input"], r["booth_hash"] = hash_item(["lingfes2027", slot, price, r["id"]])
+        candidates.sort(key=lambda r: (r["booth_hash"], r["id"]))
+        for rank, r in enumerate(candidates, 1):
+            r["booth_rank"] = rank
+            if rank <= BOOTH_CAPACITY:
+                r["status"] = "BOOTH_SELECTED"
+                r["booth_result"] = "ブース採択"
+            else:
+                r["status"] = "GALLERY_OVERFLOW"
+                r["booth_result"] = "定員超過・ギャラリー対象（繰上げなし）"
+        groups[slot] = candidates
+    return groups
 
-    outdir = Path.cwd() / OUTPUT_DIR_NAME
+
+def assign_posters(records: list[dict], price: str) -> dict[str, list[dict]]:
+    """現地ポスターはブース採択者のみ。A/B/C各8件、主発表者が参加。"""
+    groups = {}
+    for slot in SLOTS:
+        candidates = [r for r in records if r["status"] == "BOOTH_SELECTED"
+                      and r["slot"] == slot and r["poster_requested"]]
+        for r in candidates:
+            r["poster_input"], r["poster_hash"] = hash_item(
+                ["lingfes2027", "POSTER", slot, price, r["id"]])
+        candidates.sort(key=lambda r: (r["poster_hash"], r["id"]))
+        for rank, r in enumerate(candidates, 1):
+            r["poster_rank"] = rank
+            r["poster_result"] = "現地ポスター採択" if rank <= POSTER_CAPACITY else "現地ポスター非採択"
+        groups[slot] = candidates
+    return groups
+
+
+def assign_onsite(records: list[dict], price: str) -> dict:
+    """国語研内での3/27現地配信・参加は主発表者1人につき1席。"""
+    allowed = {"BOOTH_SELECTED", "GALLERY_OVERFLOW", "GALLERY_COAUTHOR", "GALLERY_MANUAL"}
+    people = defaultdict(list)
+    for r in records:
+        if r["status"] in allowed:
+            people[(r["email"], norm(r["name"]))].append(r)
+    person_rows = []
+    for (_email, _name), applications in people.items():
+        apps = sorted(applications, key=lambda r: r["no"])
+        person_id = apps[0]["id"]  # 同じ主発表者がA/Cに応募しても抽選権を増やさない。
+        opts = {r["onsite"] for r in apps}
+        if "OUTSIDE_CAPACITY" in opts and "SEAT_REQUEST" in opts:
+            raise ValueError(f"申込{[r['id'] for r in apps]}の現地居室・委員の回答が矛盾しています。事務局で確認してください")
+        if opts == {"NO"}:
+            status = "希望なし"
+        elif "OUTSIDE_CAPACITY" in opts:
+            status = "32席の定員外（居室あり・実行委員）"
+        else:
+            status = "32席抽選対象"
+        priority = any(r["poster_result"] == "現地ポスター採択" for r in apps)
+        literal, digest = hash_item(["lingfes2027", "ONSITE", price, person_id])
+        person_rows.append({"person_id":person_id, "name":apps[0]["name"],
+                            "email":apps[0]["email"], "applications": ";".join(r["id"] for r in apps),
+                            "priority_poster":priority, "status":status,
+                            "hash_input":literal, "sha256":digest, "rank":""})
+    # ポスター当選による優先採択は、Q13で現地配信・参加を希望した人だけ。
+    waiting = [p for p in person_rows if p["status"] == "32席抽選対象"]
+    waiting.sort(key=lambda p: (not p["priority_poster"], p["sha256"], p["person_id"]))
+    for rank, p in enumerate(waiting, 1):
+        p["rank"] = rank
+        if rank <= ONSITE_CAPACITY:
+            p["status"] = ("現地配信・参加採択（ポスター優先）" if p["priority_poster"]
+                           else "現地配信・参加採択（一般抽選）")
+        else:
+            p["status"] = "現地配信・参加非採択（繰上げなし）"
+    status_by_person = {(p["email"], norm(p["name"])):p["status"] for p in person_rows}
+    for r in records:
+        if r["status"] in allowed:
+            r["onsite_result"] = status_by_person[(r["email"], norm(r["name"]))]
+    return {"people": sorted(person_rows, key=lambda p: p["person_id"]),
+            "ranked": waiting,
+            "selected": [p for p in waiting if p["rank"] <= ONSITE_CAPACITY],
+            "outside": [p for p in person_rows if p["status"].startswith("32席の定員外")]}
+
+
+def write_csv(path: Path, headers: list[str], rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            # Excelの数式注入対策：氏名・題目などの文字列をCSVへ出す際にサニタイズ。
+            out = {}
+            for field in headers:
+                v = row.get(field, "")
+                if isinstance(v, set): v = ";".join(sorted(v))
+                if isinstance(v, datetime): v = v.isoformat()
+                if isinstance(v, str) and v.lstrip().startswith(("=", "+", "-", "@")):
+                    v = "'" + v
+                out[field] = v
+            writer.writerow(out)
+
+
+def public_html(records: list[dict], booth: dict, poster: dict, onsite: dict,
+                price_date: str, price: str, phase: str) -> str:
+    """外部CSS/JS不要の静的HTML。氏名・メールアドレス・同意していない題目は出さない。"""
+    def e(x): return html.escape(str(x), quote=True)
+    def tbl(rows, cols):
+        if not rows: return "<p>該当なし</p>"
+        head = "".join(f"<th>{e(label)}</th>" for _,label in cols)
+        body = "".join("<tr>"+"".join(f"<td>{e(r.get(k,''))}</td>" for k,_ in cols)+"</tr>" for r in rows)
+        return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    booth_rows = [{"id":r["id"], "slot":r["slot"], "rank":r["booth_rank"],
+                   "result":r["booth_result"]} for slot in SLOTS for r in booth[slot]]
+    poster_rows = [{"id":r["id"], "slot":r["slot"], "rank":r["poster_rank"],
+                    "result":r["poster_result"]} for slot in SLOTS for r in poster[slot]]
+    onsite_rows = [{"id":p["person_id"], "rank":p["rank"],
+                    "priority":"あり" if p["priority_poster"] else "なし",
+                    "result":p["status"]} for p in onsite["ranked"]]
+    rejected = [{"id":r["id"], "slot":r["slot"]} for r in records if r["status"]=="REJECT_MULTIPLE"]
+    gallery = [{"id":r["id"], "slot":r["slot"],
+                "consent":"資料掲載希望あり" if r["gallery_allowed"] else "資料掲載希望なし"}
+               for r in records if r["status"] in ("GALLERY_COAUTHOR","GALLERY_MANUAL","GALLERY_OVERFLOW")]
+    robots = '<meta name="robots" content="noindex,nofollow">' if phase!="FINAL" else ""
+    notice = ("【予行演習：公開禁止】実際の抽選結果ではありません。" if phase!="FINAL"
+              else "【本番結果候補】日経公式終値・回答原簿を事務局が検証したうえで公開してください。")
+    return f'''<!doctype html><html lang="ja"><head><meta charset="utf-8">{robots}
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>言語学フェス2027 公開抽選結果</title>
+<style>body{{font-family:system-ui,'Noto Sans JP',sans-serif;line-height:1.65;color:#222;margin:24px auto;max-width:1050px;padding:0 18px}}
+h1,h2{{color:#172e56}}h2{{margin-top:36px;border-bottom:1px solid #aab5c2;padding-bottom:6px}}.notice{{border:2px solid #c70;padding:10px}}table{{border-collapse:collapse;width:100%;font-size:.91rem}}th,td{{border-bottom:1px solid #ccd4dc;padding:6px;text-align:left}}th{{background:#eaf0f7}}code{{word-break:break-all}}</style></head>
+<body><h1>言語学フェス2027 公開抽選結果</h1><p class="notice">{e(notice)}</p>
+<p>抽選日：2027年2月1日（月）。使用終値：{e(price_date)} / {e(price)} 円。SHA-256（UTF-8）の16進数昇順。</p>
+<p>ブース：A/B/C各36件。ポスター：A/B/C各8件。現地配信・参加：32席（居室あり・実行委員は定員外）。繰上げ採択は行いません。</p>
+<h2>3月27日 オンラインブース抽選</h2>{tbl(booth_rows, [('id','申込番号'),('slot','枠'),('rank','順位'),('result','区分')])}
+<h2>3月28日 現地ポスター抽選</h2>{tbl(poster_rows, [('id','申込番号'),('slot','枠'),('rank','順位'),('result','区分')])}
+<h2>3月27日 現地配信・参加（32席）</h2><p>申込番号は同一の主発表者について最小の有効番号で表示。ポスター採択者を先に割当て、残席を抽選。</p>
+{tbl(onsite_rows, [('id','代表申込番号'),('rank','優先枠込み順位'),('priority','ポスター優先'),('result','区分')])}
+<h2>多重申込Reject一覧</h2>{tbl(rejected,[('id','申込番号'),('slot','枠')])}
+<h2>フェス・ギャラリー対象一覧</h2><p>資料を掲載するのは掲載希望を得た申込のみです。共著重複・定員超過の申込はブースの繰上げ対象にはなりません。</p>
+{tbl(gallery,[('id','申込番号'),('slot','枠'),('consent','公開希望')])}
+<p>試験登録・修正履歴・取消・個人情報は掲載しません。</p></body></html>'''
+
+
+def run_draw(source_file: Path, outdir: Path, mode: str = MODE,
+             manual_price: str | None = None, now: datetime | None = None) -> dict:
+    """同じ入力原簿と株価から、何度でも完全に再現可能な抽選結果を生成する。"""
+    records = read_forms_export(source_file, FORM_EXPORT_TIMEZONE)
+    history = classify_submissions(records)
+    price_date, price, phase = obtain_nikkei_close(mode, now=now, override=manual_price)
+    booths = assign_booths(records, price)
+    posters = assign_posters(records, price)
+    onsite = assign_onsite(records, price)
     outdir.mkdir(parents=True, exist_ok=True)
-    allcols = ["phase", "price_date", "nikkei_close", "slot", "application_no", "rank", "result", "sha256", "hash_input", "authors", "title"]
-    internalcols = ["application_no", "slot", "status", "reason", "last_conflicting_ids", "authors", "title"]
-    pubcols = ["phase", "price_date", "nikkei_close", "slot", "application_no", "rank", "result", "sha256", "hash_input"]
-    # 内部用CSVは著者名等を含むため www2 / GitHub public/ に置かない。
-    # 定員超過はギャラリー対象であり、補欠・繰上げ候補ではない。
-    write_csv(outdir / "全受付判定_内部用.csv", [_review_row(r) for r in records], internalcols)
-    write_csv(outdir / "抽選順位_内部用.csv", ranked, allcols)
-    write_csv(outdir / "ブース割当候補.csv", [r for r in ranked if r["result"] == "ブース割当候補"], allcols)
-    # 旧版の繰上げ候補CSVが残ると運用上誤解を招くため、この既知の旧ファイルだけ削除。
-    # 他の成果物や入力CSVは消さない。
-    (outdir / "定員超過_繰上げ候補_内部用.csv").unlink(missing_ok=True)
-    write_csv(outdir / "定員超過_ギャラリー対象_内部用.csv", [r for r in ranked if r["result"] != "ブース割当候補"], allcols)
-    write_csv(outdir / "多重申込Reject_内部用.csv", [_review_row(r) for r in records if r["status"]=="REJECT_MULTIPLE"], internalcols)
-    write_csv(outdir / "試験登録Reject_内部用.csv", [_review_row(r) for r in records if r["status"]=="REJECT_TEST"], internalcols)
-    write_csv(outdir / "共著申込ギャラリー移動_内部用.csv", [_review_row(r) for r in records if r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL")], internalcols)
-    latest_rows = [
-        {"slot": slot, "author_key": author, "last_application_no": aid}
-        for (slot, author), aid in sorted(details["latest_by_slot_author"].items())
-    ]
-    write_csv(outdir / "共著者別_最後の発表者ID_内部用.csv", latest_rows, ["slot", "author_key", "last_application_no"])
-    # Reject公開台帳には個人名・メール・題目を含めない。
-    reject_public = [
-        {"application_no": r["application_no"], "slot": r["slot"], "reason": "多重申込によるReject"}
-        for r in records if r["status"] == "REJECT_MULTIPLE"
-    ]
-    write_csv(outdir / "多重申込Reject_公開用.csv", reject_public, ["application_no", "slot", "reason"])
-    write_csv(outdir / "抽選検証用_匿名.csv", ranked, pubcols)
-    # -------------------------------------------------------------------
-    # Web公開向けのファイルだけを一つの独立したディレクトリにまとめる。
-    # 出力フォルダのルートには著者名や内部審査事由が入ったCSVがあるので、
-    # ルートを丸ごとWeb公開してはいけない。web_public/ のみを検討対象とする。
-    # なお、PREVIEW/デモのページは公開不可なのでnoindex警告を表示する。
-    # -------------------------------------------------------------------
-    public_dir = outdir / "web_public"
-    public_dir.mkdir(parents=True, exist_ok=True)
-    public_html = make_public_html(records, ranked, price_date, price, phase)
-    (public_dir / "index.html").write_text(public_html, encoding="utf-8")
-    write_csv(public_dir / "多重申込Reject一覧.csv", reject_public,
-              ["application_no", "slot", "reason"])
-    gallery_public = [
-        {"application_no": r["application_no"], "slot": r["slot"], "category": "共著者重複によるギャラリー移動"}
-        for r in records if r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL")
-    ]
-    write_csv(public_dir / "共著者重複_ギャラリー移動一覧.csv", gallery_public,
-              ["application_no", "slot", "category"])
-    write_csv(public_dir / "抽選順位_匿名.csv", ranked, pubcols)
-    # 公開用の条件ファイルにはReject・試験用IDリストや原簿ハッシュを含めない。
-    public_meta = {
-        "phase": phase,
-        "input_mode": INPUT_MODE,
-        "price_date": price_date,
-        "nikkei_close": price,
-        "hash_template": "lingfes2027|{slot}|{nikkei_close_2dp}|{application_no_4d}",
-        "sort_order": "ascending",
-        "booth_capacity_per_slot": BOOTH_CAPACITY,
-        "waitlist_or_promotion": False,
-        "gallery_publication_requires_consent": True,
-        "last_application_number": f"{LAST_PRESENTER_ID:04d}",
-        "counts": {s: {
-            "lottery_eligible": sum(r["slot"] == s and r["status"] == "LOTTERY" for r in records),
-            "booth_selected": sum(r["slot"] == s and r["result"] == "ブース割当候補" for r in ranked),
-            "capacity_gallery": sum(r["slot"] == s and r["result"] == "フェス・ギャラリー対象（定員超過）" for r in ranked),
-            "coauthor_gallery": sum(r["slot"] == s and r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL") for r in records),
-            "multiple_reject": sum(r["slot"] == s and r["status"] == "REJECT_MULTIPLE" for r in records),
-        } for s in SLOTS},
-        "note": "予行演習の結果は正式公表不可。正式公表前に株価と受付情報を確認すること。"
+    internal = outdir / "internal_private"
+    internal.mkdir(exist_ok=True)
+    cols = ("id", "action", "old_id", "completed", "status", "reason", "slot", "name", "email",
+            "affiliation", "coauthors", "title", "summary", "upload_reference", "gallery_allowed",
+            "poster_requested", "onsite", "onsite_result", "booth_rank", "booth_result", "booth_hash",
+            "poster_rank", "poster_result", "poster_hash", "future_organizer")
+    write_csv(internal / "全受付履歴_内部用.csv", list(cols), records)
+    write_csv(internal / "ブース抽選_内部用.csv",
+              ["id", "slot", "name", "email", "title", "booth_rank", "booth_hash", "booth_result"],
+              [r for s in SLOTS for r in booths[s]])
+    write_csv(internal / "現地ポスター抽選_内部用.csv",
+              ["id", "slot", "name", "email", "title", "poster_rank", "poster_hash", "poster_result"],
+              [r for s in SLOTS for r in posters[s]])
+    write_csv(internal / "現地配信抽選_内部用.csv",
+              ["person_id", "applications", "name", "email", "priority_poster", "rank", "status", "sha256"],
+              onsite["people"])
+    write_csv(internal / "共著者別_最後の発表者ID_内部用.csv",
+              ["slot", "author_key", "last_id"],
+              [{"slot":s,"author_key":a,"last_id":i} for (s,a),i in sorted(history["latest_by_slot_author"].items())])
+    write_csv(internal / "運営参加希望者_内部用.csv", ["id","name","email","slot"],
+              [r for r in records if r["status"] in ("BOOTH_SELECTED","GALLERY_OVERFLOW","GALLERY_COAUTHOR","GALLERY_MANUAL") and r["future_organizer"]])
+    for label, statuses in (
+        ("多重申込Reject_内部用.csv", {"REJECT_MULTIPLE"}),
+        ("試験登録Reject_内部用.csv", {"REJECT_TEST"}),
+        ("申込修正取消_内部用.csv", {"SUPERSEDED","CANCELLED","CANCEL_REQUEST"}),
+        ("共著申込ギャラリー移動_内部用.csv", {"GALLERY_COAUTHOR","GALLERY_MANUAL"}),
+        ("定員超過_ギャラリー対象_内部用.csv", {"GALLERY_OVERFLOW"}),
+        ("締切後_内部用.csv", {"REJECT_LATE"}),
+    ):
+        write_csv(internal / label, ["id","slot","status","reason","gallery_allowed","title","email"],
+                  [r for r in records if r["status"] in statuses])
+    public = outdir / "web_public"
+    # 古い公開結果ファイルが残ると、意図せず過去の内容を公開する危険がある。
+    # このフォルダにはプログラム生成物以外は置かないという約束で毎回初期化。
+    if public.exists():
+        shutil.rmtree(public)
+    public.mkdir(exist_ok=True)
+    write_csv(public / "ブース抽選順位_匿名.csv",
+              ["id","slot","booth_rank","booth_hash","booth_result"],
+              [r for s in SLOTS for r in booths[s]])
+    write_csv(public / "現地ポスター抽選順位_匿名.csv",
+              ["id","slot","poster_rank","poster_hash","poster_result"],
+              [r for s in SLOTS for r in posters[s]])
+    write_csv(public / "現地配信抽選順位_匿名.csv",
+              ["person_id","rank","priority_poster","status","sha256"], onsite["ranked"])
+    write_csv(public / "多重申込Reject一覧.csv", ["id", "slot", "status"],
+              [r for r in records if r["status"]=="REJECT_MULTIPLE"])
+    write_csv(public / "ギャラリー対象_匿名.csv", ["id","slot","status","gallery_allowed"],
+              [r for r in records if r["status"] in ("GALLERY_COAUTHOR","GALLERY_MANUAL","GALLERY_OVERFLOW")])
+    (public / "index.html").write_text(public_html(records,booths,posters,onsite,price_date,price,phase),encoding="utf-8")
+    meta = {
+        "draw_date":DRAW_DATE,"deadline_jst":DEADLINE_JST,"price_date":price_date,
+        "nikkei_close":price,"phase":phase,"price_source":"Yahoo Finance ^N225, verify with Nikkei official",
+        "hash_order":"SHA-256 hex ascending","four_digit_padding":True,
+        "hash_patterns":["lingfes2027|{slot}|{close}|{id4}",
+                         "lingfes2027|POSTER|{slot}|{close}|{id4}",
+                         "lingfes2027|ONSITE|{close}|{min_active_id4_per_person}"],
+        "booth_capacity_per_slot":BOOTH_CAPACITY,"poster_capacity_per_slot":POSTER_CAPACITY,
+        "onsite_seats":ONSITE_CAPACITY,"onsite_population":"primary presenters in this Forms export only",
+        "no_waitlist":True,
+        "counts":{"booths":{s:sum(r["booth_result"]=="ブース採択" for r in booths[s]) for s in SLOTS},
+                  "posters":{s:sum(r["poster_result"]=="現地ポスター採択" for r in posters[s]) for s in SLOTS},
+                  "onsite_selected":len(onsite["selected"]),"onsite_outside":len(onsite["outside"]),
+                  "multiple_rejected":sum(r["status"]=="REJECT_MULTIPLE" for r in records)},
     }
-    (public_dir / "抽選条件_公開用.json").write_text(
-        json.dumps(public_meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (public / "抽選条件_公開用.json").write_text(json.dumps(meta,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    # 公開用ディレクトリに内部のメールや氏名が混ざっていないか機械的に確認。
+    for p in public.iterdir():
+        if p.suffix not in (".html", ".csv", ".json"):
+            raise RuntimeError(f"Web公開フォルダに予期しないファイル: {p.name}")
+    report = dict(meta)
+    report.update({"input_sha256":hashlib.sha256(source_file.read_bytes()).hexdigest(),
+                   "last_form_response_id":history["last_id"],
+                   "manual_lists":history["manual_lists"],
+                   "timestamp_timezone_assumption":FORM_EXPORT_TIMEZONE})
+    (internal / "実行条件_監査用.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    return report
 
-    # 受付原簿や内部判定リストの改変を検出するために固定ハッシュを残す。
-    # この値自体は氏名などを公開しない（ただし元データは安全に保存する）。
-    application_fingerprint = hashlib.sha256("\n".join(
-        f"{r['application_no']}|{r['slot']}|{';'.join(sorted(r['author_keys']))}|{r.get('title','')}|{r['status']}"
-        for r in records
-    ).encode("utf-8")).hexdigest()
-    selection_input = "\n".join([
-        f"LAST_PRESENTER_ID={LAST_PRESENTER_ID}",
-        f"MAX_APPLICATION_NUMBER={MAX_APPLICATION_NUMBER}",
-        f"BOOTH_CAPACITY={BOOTH_CAPACITY}",
-    ] + [f"{key}={','.join(sorted(ids))}" for key, ids in sorted(details["manual"].items())])
-    metadata = {
-        "lottery_rule": "lingfes2027|{slot}|{nikkei_close_2dp}|{application_no_4d} -> SHA256 -> ascending",
-        "run_at_jst": datetime.now(TIMEZONE).isoformat(),
-        "phase": phase, "input_mode": INPUT_MODE,
-        "price_date": price_date, "nikkei_close": price,
-        "price_source": "Yahoo Finance (^N225), daily Close, auto_adjust=False",
-        "scheduled_final_price_date": FINAL_PRICE_DATE,
-        "max_application_number": MAX_APPLICATION_NUMBER,
-        "last_presenter_id": f"{LAST_PRESENTER_ID:04d}",
-        "booth_capacity_per_slot": BOOTH_CAPACITY,
-        "waitlist_or_promotion": False,
-        "manual_lists": {key: sorted(ids) for key, ids in details["manual"].items()},
-        "categories": dict(sorted(counts.items())),
-        "counts_by_slot": {slot: {
-            "lottery": sum(r["slot"]==slot and r["status"]=="LOTTERY" for r in records),
-            "booths": sum(r["slot"]==slot and r["result"]=="ブース割当候補" for r in ranked),
-            "capacity_gallery": sum(r["slot"]==slot and r["result"]=="フェス・ギャラリー対象（定員超過）" for r in ranked),
-            "coauthor_gallery": sum(r["slot"]==slot and r["status"] in ("GALLERY_COAUTHOR", "GALLERY_MANUAL") for r in records),
-        } for slot in SLOTS},
-        "sha256_private_application_decisions": application_fingerprint,
-        "sha256_manual_control_settings": hashlib.sha256(selection_input.encode("utf-8")).hexdigest(),
-        "notes": "共著者の重複は同一コアタイム内のみ。ギャラリー移動はRejectではない。予行演習ページを本番として公開しない。",
-    }
-    (outdir / "抽選実行条件.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
-    print(f"\n結果の保存先: {outdir}")
-    for file in sorted(outdir.iterdir()):
-        print(" -", file.name)
-    print(f"[Web公開候補] {public_dir} 以下だけを個別確認してください")
-    print("[注意] 内部用CSVをWebサイトにアップロードしないでください")
 
-    # Colabなら一式をZIPとしてまとめてローカルへダウンロード。
-    # （ZIPには内部情報が含まれるので、そのままWeb公開しない）
+def main():
+    parser=argparse.ArgumentParser(description="言語学フェス2027：FormsのExcelからブース・ポスター・現地配信抽選")
+    parser.add_argument("--input",default=INPUT_FILE,help="Microsoft Formsの回答.xlsx/.csv")
+    parser.add_argument("--output",default=OUTPUT_DIR,help="結果出力先。GitHubへコミット禁止")
+    parser.add_argument("--mode",choices=["auto","preview","final"],default=MODE)
+    parser.add_argument("--preview-close",default=None,help="予行演習の架空終値（本番には使用不可）")
+    args=parser.parse_args()
+    path=args.input
+    if not path:
+        try:
+            from google.colab import files
+            print("Microsoft Formsの回答Excel(.xlsx)をアップロードしてください。")
+            uploaded=files.upload()
+            if len(uploaded)!=1: raise ValueError("1個のExcel/CSVだけをアップロードしてください")
+            path=next(iter(uploaded))
+        except ImportError as ex:
+            raise SystemExit("Mac/Windowsでは --input 回答.xlsx を指定してください") from ex
+    report=run_draw(Path(path),Path(args.output),args.mode,args.preview_close)
+    print("抽選実行結果（個人情報は表示しません）:")
+    print(json.dumps({k:report[k] for k in ("draw_date","price_date","nikkei_close","phase","counts")},ensure_ascii=False,indent=2))
+    print("出力先:",Path(args.output).resolve())
+    print("[重要] internal_private/ と入力ExcelはGitHubへアップロードしないでください")
+    if report["phase"] != "FINAL": print("[重要] PREVIEWは公開禁止です")
     try:
         from google.colab import files
-        import shutil
     except ImportError:
         pass
     else:
-        archive = shutil.make_archive(str(outdir), "zip", root_dir=outdir)
-        print("Colabから内部用結果ZIPをダウンロード:", archive)
+        # 応募者の氏名やメールアドレスを含むので、このZIPは個人用にだけ保存。
+        archive=shutil.make_archive(str(Path(args.output)),"zip",root_dir=Path(args.output))
         files.download(archive)
-        public_archive = shutil.make_archive(str(outdir) + "_web_public", "zip", root_dir=public_dir)
-        print("Colabから公開用のみのZIPをダウンロード:", public_archive)
-        files.download(public_archive)
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     main()

@@ -1,0 +1,7 @@
+# 受付回答には個人情報が入る。公開GitHubへ置かない。
+/lingfes2027_lottery_results/
+/lingfes2027_lottery_results.zip
+/*.xlsx
+/*.csv
+/.venv/
+/__pycache__/

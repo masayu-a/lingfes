@@ -1,3 +1,5 @@
-# For running the lottery locally (not needed to read the code on GitHub).
-yfinance>=0.2.60
-pandas>=1.5
+# Microsoft Forms .xlsx input
+openpyxl>=3.1,<4
+# Nikkei 225 daily historical close from Yahoo Finance
+pandas>=2.0,<4
+yfinance>=0.2.50,<1
