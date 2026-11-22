@@ -17,10 +17,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build static HTML (no JavaScript)
         run: |
           python3 scripts/build_site.py
+          # build_site.py recreates public/, so standalone guide must be copied afterward.
+          cp src/2027/consultation-guide.html public/2027/consultation-guide.html
           python3 scripts/validate_site.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
