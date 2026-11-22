@@ -12,8 +12,8 @@
       重複は最後の申込だけをブース抽選へ、古い申込をギャラリー対象にする。
   (4) 2027-02-01の日経平均終値を使い、ブース A/B/C を各36件選ぶ。
   (5) ブース採択者の希望者から、3月28日のポスター A/B/C を各8件選ぶ。
-  (6) 3月27日現地配信・参加は「人」を単位として32席選ぶ。同一人物が
-      A/C両方に申し込んでも1席。居室あり・実行委員は32席の定員外。
+  (6) 3月27日現地配信はオンラインブース採択者を「人」単位で最大28席選ぶ。同一人物が
+      A/C両方に申し込んでも1席。居室あり・実行委員は28席の定員外。
       現地ポスター採択者のうち希望者を優先し、残席を抽選する。
   (7) 全結果を事務局用CSVに、個人情報を除いた結果を web_public/ に出力。
 
@@ -40,10 +40,10 @@
     GitHubや公開サーバーに決して置かないこと。
   - web_public/ は匿名申込IDと判定だけ。試験登録のIDは公開しない。
   - PREVIEWは絶対に公表しない。web_publicの内容は事務局の承認後に公開。
-  - このプログラムが扱う32席は、この発表申込フォームの主発表者用。
-    2月8日以降募集する一般参加者を同じ32席へ含める場合は、別の応募原簿と
-    締切後の公開数値による別抽選が必要。既知の2月1日終値で後から応募
-    した参加者を公平に抽選することはできない。
+  - このプログラムが扱う28席は、この発表申込フォームのオンラインブース採択者（主発表者）専用。
+    ギャラリー対象者と一般参加のみの方は所内配信の抽選対象外。
+    2月8日以降に募集する一般参加者は3月27日にはオンライン参加とし、
+    3月28日の現地参加とは別管理とする。
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ TEST_REGISTRATION_REJECT_IDS = []      # 試験登録：完全除外。受付番
 
 BOOTH_CAPACITY = 36         # A/B/Cそれぞれ最大36件
 POSTER_CAPACITY = 8         # A/B/Cそれぞれ最大8件（3/28、計24件）
-ONSITE_CAPACITY = 32        # 3/27、主発表者1人1席（居室・委員は定員外）
+ONSITE_CAPACITY = 28        # 3/27、主発表者1人1席（居室・委員は定員外）
 DRAW_DATE = "2027-02-01"
 DEADLINE_JST = "2027-02-01 12:00:00"
 CLOSE_READY_HOUR_JST = 16  # 時刻は安全側の目安。終値のデータ公開時刻は保証しない。
@@ -520,8 +520,8 @@ def assign_posters(records: list[dict], price: str) -> dict[str, list[dict]]:
 
 
 def assign_onsite(records: list[dict], price: str) -> dict:
-    """国語研内での3/27現地配信・参加は主発表者1人につき1席。"""
-    allowed = {"BOOTH_SELECTED", "GALLERY_OVERFLOW", "GALLERY_COAUTHOR", "GALLERY_MANUAL"}
+    """3/27国語研所内配信はオンラインブース採択者の希望者だけを対象とし、主発表者1人1席。"""
+    allowed = {"BOOTH_SELECTED"}  # 所内配信はオンラインブース採択者のみ。ギャラリー対象者は除外。
     people = defaultdict(list)
     for r in records:
         if r["status"] in allowed:
@@ -536,9 +536,9 @@ def assign_onsite(records: list[dict], price: str) -> dict:
         if opts == {"NO"}:
             status = "希望なし"
         elif "OUTSIDE_CAPACITY" in opts:
-            status = "32席の定員外（居室あり・実行委員）"
+            status = "28席の定員外（居室あり・実行委員）"
         else:
-            status = "32席抽選対象"
+            status = "28席抽選対象"
         priority = any(r["poster_result"] == "現地ポスター採択" for r in apps)
         literal, digest = hash_item(["lingfes2027", "ONSITE", price, person_id])
         person_rows.append({"person_id":person_id, "name":apps[0]["name"],
@@ -546,7 +546,7 @@ def assign_onsite(records: list[dict], price: str) -> dict:
                             "priority_poster":priority, "status":status,
                             "hash_input":literal, "sha256":digest, "rank":""})
     # ポスター当選による優先採択は、Q13で現地配信・参加を希望した人だけ。
-    waiting = [p for p in person_rows if p["status"] == "32席抽選対象"]
+    waiting = [p for p in person_rows if p["status"] == "28席抽選対象"]
     waiting.sort(key=lambda p: (not p["priority_poster"], p["sha256"], p["person_id"]))
     for rank, p in enumerate(waiting, 1):
         p["rank"] = rank
@@ -562,7 +562,7 @@ def assign_onsite(records: list[dict], price: str) -> dict:
     return {"people": sorted(person_rows, key=lambda p: p["person_id"]),
             "ranked": waiting,
             "selected": [p for p in waiting if p["rank"] <= ONSITE_CAPACITY],
-            "outside": [p for p in person_rows if p["status"].startswith("32席の定員外")]}
+            "outside": [p for p in person_rows if p["status"].startswith("28席の定員外")]}
 
 
 def write_csv(path: Path, headers: list[str], rows: list[dict]) -> None:
@@ -612,10 +612,10 @@ def public_html(records: list[dict], booth: dict, poster: dict, onsite: dict,
 h1,h2{{color:#172e56}}h2{{margin-top:36px;border-bottom:1px solid #aab5c2;padding-bottom:6px}}.notice{{border:2px solid #c70;padding:10px}}table{{border-collapse:collapse;width:100%;font-size:.91rem}}th,td{{border-bottom:1px solid #ccd4dc;padding:6px;text-align:left}}th{{background:#eaf0f7}}code{{word-break:break-all}}</style></head>
 <body><h1>言語学フェス2027 公開抽選結果</h1><p class="notice">{e(notice)}</p>
 <p>抽選日：2027年2月1日（月）。使用終値：{e(price_date)} / {e(price)} 円。SHA-256（UTF-8）の16進数昇順。</p>
-<p>ブース：A/B/C各36件。ポスター：A/B/C各8件。現地配信・参加：32席（居室あり・実行委員は定員外）。繰上げ採択は行いません。</p>
+<p>ブース：A/B/C各36件。ポスター：A/B/C各8件。現地配信・参加：28席（居室あり・実行委員は定員外）。繰上げ採択は行いません。</p>
 <h2>3月27日 オンラインブース抽選</h2>{tbl(booth_rows, [('id','申込番号'),('slot','枠'),('rank','順位'),('result','区分')])}
 <h2>3月28日 現地ポスター抽選</h2>{tbl(poster_rows, [('id','申込番号'),('slot','枠'),('rank','順位'),('result','区分')])}
-<h2>3月27日 現地配信・参加（32席）</h2><p>申込番号は同一の主発表者について最小の有効番号で表示。ポスター採択者を先に割当て、残席を抽選。</p>
+<h2>3月27日 現地配信・参加（28席）</h2><p>申込番号は同一の主発表者について最小の有効番号で表示。所内配信希望の現地ポスター採択者を先に割当て、残る28席をオンラインブース採択者の所内配信希望者から抽選。ギャラリー対象者と一般参加のみの方は対象外。</p>
 {tbl(onsite_rows, [('id','代表申込番号'),('rank','優先枠込み順位'),('priority','ポスター優先'),('result','区分')])}
 <h2>多重申込Reject一覧</h2>{tbl(rejected,[('id','申込番号'),('slot','枠')])}
 <h2>フェス・ギャラリー対象一覧</h2><p>資料を掲載するのは掲載希望を得た申込のみです。共著重複・定員超過の申込はブースの繰上げ対象にはなりません。</p>
@@ -691,7 +691,7 @@ def run_draw(source_file: Path, outdir: Path, mode: str = MODE,
                          "lingfes2027|POSTER|{slot}|{close}|{id4}",
                          "lingfes2027|ONSITE|{close}|{min_active_id4_per_person}"],
         "booth_capacity_per_slot":BOOTH_CAPACITY,"poster_capacity_per_slot":POSTER_CAPACITY,
-        "onsite_seats":ONSITE_CAPACITY,"onsite_population":"primary presenters in this Forms export only",
+        "onsite_seats":ONSITE_CAPACITY,"onsite_population":"primary presenters with accepted online booths and onsite requests; excludes gallery and participation-only",
         "no_waitlist":True,
         "counts":{"booths":{s:sum(r["booth_result"]=="ブース採択" for r in booths[s]) for s in SLOTS},
                   "posters":{s:sum(r["poster_result"]=="現地ポスター採択" for r in posters[s]) for s in SLOTS},

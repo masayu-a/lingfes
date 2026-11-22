@@ -161,12 +161,15 @@ class LotteryTests(unittest.TestCase):
             onsite=lottery.assign_onsite(r,"58000.01")
             self.assertEqual([sum(x["booth_result"]=="ブース採択" for x in booth[s]) for s in lottery.SLOTS], [36,36,36])
             self.assertEqual([sum(x["poster_result"]=="現地ポスター採択" for x in poster[s]) for s in lottery.SLOTS], [8,8,8])
-            self.assertEqual(len(onsite["selected"]),32)
+            self.assertEqual(len(onsite["selected"]),28)
+            self.assertEqual(lottery.ONSITE_CAPACITY,28)
             self.assertLessEqual(sum(x["priority_poster"] for x in onsite["selected"]),24)
             self.assertTrue(all(x["priority_poster"] for x in onsite["ranked"][:24]))
-            self.assertEqual(len(onsite["outside"]),2)
-            self.assertFalse(any(x["status"]=="GALLERY_OVERFLOW" and x["poster_result"]=="現地ポスター採択" for x in r))
+            self.assertEqual(len(onsite["outside"]),sum(x["status"]=="BOOTH_SELECTED" and x["onsite"]=="OUTSIDE_CAPACITY" for x in r))
             self.assertEqual(len([x for x in r if x["status"]=="GALLERY_OVERFLOW"]),134-108)
+            self.assertTrue(all(x["status"]=="BOOTH_SELECTED" for x in r if x["onsite_result"].startswith("現地配信・参加採択")))
+            self.assertFalse(any(x["status"]=="GALLERY_OVERFLOW" and x["onsite_result"].startswith("現地配信・参加採択") for x in r))
+            self.assertFalse(any(x["status"]=="GALLERY_OVERFLOW" and x["poster_result"]=="現地ポスター採択" for x in r))
 
     def test_cross_slot_same_person_only_one_onsite_seat(self):
         with tempfile.TemporaryDirectory() as d:
@@ -208,11 +211,40 @@ class LotteryTests(unittest.TestCase):
             self.assertIn("0002",page)
             self.assertNotIn("0003",page)
             self.assertIn("公開禁止",page)
+            self.assertIn("28席",page)
             self.assertNotIn("<script",page.lower())
             self.assertEqual(json.loads((root/"result/web_public/抽選条件_公開用.json").read_text(encoding="utf-8"))["draw_date"],"2027-02-01")
             for item in (root/"result/web_public").iterdir():
                 if item.suffix in (".csv",".html"):
                     self.assertNotIn("person1@example.org",item.read_text(encoding="utf-8-sig"))
 
+    def test_no_onsite_eligibility_for_gallery(self):
+        """ブース落選・共著重複のギャラリー対象者は所内配信席を取得できない。"""
+        with tempfile.TemporaryDirectory() as d:
+            p=pathlib.Path(d)/"r.xlsx"
+            rows=[form_row(i,slot="A",onsite=ONSITE_YES,poster="いいえ") for i in range(1,45)]
+            write_test_xlsx(p,rows)
+            r=lottery.read_forms_export(p);lottery.classify_submissions(r)
+            lottery.assign_booths(r,"58000.01")
+            lottery.assign_posters(r,"58000.01")
+            onsite=lottery.assign_onsite(r,"58000.01")
+            self.assertEqual(len(onsite["ranked"]),36)
+            self.assertEqual(len(onsite["selected"]),28)
+            self.assertEqual(len([x for x in r if x["status"]=="GALLERY_OVERFLOW"]),8)
+            self.assertTrue(all(x["status"]=="BOOTH_SELECTED" for x in r if x["onsite_result"].startswith("現地配信・参加採択")))
+
+    def test_priority_24_and_remaining_four(self):
+        """24人のポスター採択者に優先席を付与した後、残席4を抽選する。"""
+        with tempfile.TemporaryDirectory() as d:
+            p=pathlib.Path(d)/"r.xlsx"
+            rows=[form_row(i,slot="A" if i<=30 else ("B" if i<=60 else "C")) for i in range(1,91)]
+            write_test_xlsx(p,rows)
+            r=lottery.read_forms_export(p);lottery.classify_submissions(r)
+            lottery.assign_booths(r,"58000.01")
+            lottery.assign_posters(r,"58000.01")
+            onsite=lottery.assign_onsite(r,"58000.01")
+            self.assertEqual(len(onsite["selected"]),28)
+            self.assertEqual(sum(x["priority_poster"] for x in onsite["selected"]),24)
+            self.assertEqual(sum(not x["priority_poster"] for x in onsite["selected"]),4)
 
 if __name__ == "__main__": unittest.main()
