@@ -27,6 +27,7 @@ jobs:
       - name: Build and validate static HTML
         run: |
           python3 scripts/build_site.py
+          cp src/2027/consultation-guide.html public/2027/consultation-guide.html
           python3 scripts/validate_site.py
 
       - name: Commit public directory if changed
